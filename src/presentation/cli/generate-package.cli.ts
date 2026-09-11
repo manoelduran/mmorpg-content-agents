@@ -31,6 +31,7 @@ interface CliArgs {
   brief: string;
   storyModel: string;
   devModel: string;
+  artMaxBudgetUsd: number;
   outputRoot: string;
   backendPath: string;
   frontendPath?: string;
@@ -59,6 +60,23 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Art is the only agent still calling a paid provider (the Claude Agent
+ * SDK, for its Bash/Read/Glob/Write tool loop) — this caps what a single
+ * `npm run generate` run can spend there, enforced by the SDK itself (see
+ * run-structured-agent.ts's maxBudgetUsd). A default IS safe to hardcode
+ * here (unlike the OpenRouter model ids above) since a USD figure doesn't
+ * go stale the way a model catalog does. Override with
+ * ART_AGENT_MAX_BUDGET_USD if $5 isn't the right number for you.
+ *
+ * This is a defense-in-depth precaution, not the primary safeguard — the
+ * real, account-level backstop is the spend limit set on the API key /
+ * organization in the Anthropic Console, which holds even if this code has
+ * a bug. Set both, the same way the OpenRouter key got its own $5 credit
+ * limit when it was created.
+ */
+const DEFAULT_ART_MAX_BUDGET_USD = 5;
+
 function parseArgs(argv: string[]): CliArgs {
   const get = (flag: string): string | undefined => {
     const i = argv.indexOf(flag);
@@ -83,6 +101,9 @@ function parseArgs(argv: string[]): CliArgs {
     brief,
     storyModel: requireEnv("OPENROUTER_STORY_MODEL"),
     devModel: requireEnv("OPENROUTER_DEV_MODEL"),
+    artMaxBudgetUsd: process.env.ART_AGENT_MAX_BUDGET_USD
+      ? Number(process.env.ART_AGENT_MAX_BUDGET_USD)
+      : DEFAULT_ART_MAX_BUDGET_USD,
     outputRoot: resolve(get("--output") ?? "output"),
     backendPath: resolve(get("--backend-path") ?? "../mmorpg-backend"),
     frontendPath: get("--frontend-path")
@@ -106,6 +127,7 @@ function buildOrchestrator(
   openRouterClient: ChatCompletionClient,
   storyModel: string,
   devModel: string,
+  artMaxBudgetUsd: number,
 ): OrchestrateContentGenerationUseCase {
   const worldRegistryRepository = new FileWorldRegistryRepository(outputRoot);
   return new OrchestrateContentGenerationUseCase(
@@ -115,7 +137,7 @@ function buildOrchestrator(
     // that genuinely needs the SDK's tool-execution loop (Bash/Read/Glob/
     // Write, see claude-art-agent.ts), which OpenRouter's plain chat
     // completions API has no equivalent for. See docs/ARCHITECTURE.md.
-    new GenerateAssetsUseCase(new ClaudeArtAgent(approvalGate)),
+    new GenerateAssetsUseCase(new ClaudeArtAgent(approvalGate, artMaxBudgetUsd)),
     new GenerateDevContentUseCase(new OpenRouterDevAgent(openRouterClient, devModel)),
     new AssemblePackageUseCase(),
     new ValidatePackageUseCase(),
@@ -139,8 +161,14 @@ async function main() {
     openRouterClient,
     args.storyModel,
     args.devModel,
+    args.artMaxBudgetUsd,
   );
 
+  console.log(
+    `Art (Claude Agent SDK) is capped at $${args.artMaxBudgetUsd} for this run ` +
+      `(override with ART_AGENT_MAX_BUDGET_USD) — set a matching spend limit on your ` +
+      `Anthropic API key/org too, that's the backstop this code can't replace.`,
+  );
   if (args.autoApprove) {
     console.log("[--yes] Running unattended — every tool call is auto-approved and logged.");
   }

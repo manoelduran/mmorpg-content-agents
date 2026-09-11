@@ -39,7 +39,19 @@ monsters) in the story with exactly one asset entry each (entityId must
 match their id from the story).`;
 
 export class ClaudeArtAgent implements IArtAgent {
-  constructor(private readonly approvalGate: IApprovalGate) {}
+  /**
+   * @param maxBudgetUsd Hard USD cap enforced by the SDK across every retry
+   * attempt combined (see run-structured-agent.ts's maxBudgetUsd doc
+   * comment) — Art is the only agent still calling a paid provider with
+   * real tool use (Bash/Read/Glob/Write), so it's the only one that needs
+   * this. A precaution, not a substitute for the account-level spend limit
+   * set in the Anthropic Console, which is the actual hard backstop
+   * independent of anything this codebase does.
+   */
+  constructor(
+    private readonly approvalGate: IApprovalGate,
+    private readonly maxBudgetUsd: number,
+  ) {}
 
   async generate(
     story: StoryManifest,
@@ -84,6 +96,7 @@ ${instanceMonsterLines.join("\n")}`;
       >,
       zodSchema: AssetManifestSchema,
       approvalGate: this.approvalGate,
+      maxBudgetUsd: this.maxBudgetUsd,
     });
   }
 }

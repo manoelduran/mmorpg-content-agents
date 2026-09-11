@@ -29,6 +29,21 @@ export interface StructuredAgentConfig<T> {
   approvalGate: IApprovalGate;
   cwd?: string;
   retryPolicy?: RetryPolicy;
+  /**
+   * Hard USD cap for this agent, enforced by the SDK itself (`Options.
+   * maxBudgetUsd` — the API stops the call and returns an
+   * `error_max_budget_usd` result, which classifyResultError() below
+   * already turns into a non-retryable AgentRefusalError). This is the
+   * real safety net for a tool-using agent whose OWN agentic loop could
+   * run long and expensive — a prompt saying "be efficient" is a request,
+   * this is an enforced limit. Applies across every retry attempt
+   * COMBINED, not per attempt — see runStructuredAgent's cumulativeCostUsd
+   * tracking, which shrinks the budget handed to each subsequent attempt
+   * so 3 retries can't each spend up to the full cap. Undefined means
+   * uncapped (Story/Dev leave this unset: they call a $0 OpenRouter model,
+   * nothing to cap).
+   */
+  maxBudgetUsd?: number;
 }
 
 /** The unit of work retried by withRetry — just the prompt text, since
@@ -49,9 +64,22 @@ export async function runStructuredAgent<T>(
   userPrompt: string,
   config: StructuredAgentConfig<T>,
 ): Promise<T> {
+  // Spent so far across every attempt — see maxBudgetUsd's doc comment on
+  // StructuredAgentConfig for why this needs to be tracked here rather than
+  // just handing the full cap to every retry.
+  let cumulativeCostUsd = 0;
+
   return withRetry<AttemptInput, T>(
     { prompt: userPrompt },
-    (attemptInput) => runOnce(attemptInput.prompt, config),
+    (attemptInput) => {
+      const remainingBudget =
+        config.maxBudgetUsd === undefined
+          ? undefined
+          : Math.max(config.maxBudgetUsd - cumulativeCostUsd, 0);
+      return runOnce(attemptInput.prompt, config, remainingBudget, (costUsd) => {
+        cumulativeCostUsd += costUsd;
+      });
+    },
     (error, attemptInput) => classify(error, attemptInput),
     config.retryPolicy ?? DEFAULT_RETRY_POLICY,
   );
@@ -60,6 +88,8 @@ export async function runStructuredAgent<T>(
 async function runOnce<T>(
   prompt: string,
   config: StructuredAgentConfig<T>,
+  maxBudgetUsd: number | undefined,
+  recordCost: (costUsd: number) => void,
 ): Promise<T> {
   const result = query({
     prompt,
@@ -68,6 +98,7 @@ async function runOnce<T>(
       agents: { [config.agentType]: config.definition },
       outputFormat: { type: "json_schema", schema: config.outputSchema },
       cwd: config.cwd,
+      maxBudgetUsd,
       // ── The permission gate in action ──
       // The SDK calls this before EVERY tool use, no matter how deep in
       // the agent's own tool loop it happens. Returning "deny" blocks
@@ -88,6 +119,11 @@ async function runOnce<T>(
   try {
     for await (const message of result) {
       if (message.type === "result") {
+        // Recorded before checking subtype: a call that fails still spent
+        // money, and this attempt's cost has to count against the running
+        // total either way for the next attempt's shrunk budget to be
+        // accurate.
+        recordCost(message.total_cost_usd);
         if (message.subtype !== "success") {
           throw classifyResultError(message);
         }
