@@ -7,6 +7,7 @@ import { GenerateDevContentUseCase } from "../../application/use-cases/generate-
 import { LoadTargetRepoConventionsUseCase } from "../../application/use-cases/load-target-repo-conventions.use-case";
 import { AssemblePackageUseCase } from "../../application/use-cases/assemble-package.use-case";
 import { ValidatePackageUseCase } from "../../application/use-cases/validate-package.use-case";
+import { ApplyContentGuardrailsUseCase, ContentGuardrailViolationError } from "../../application/use-cases/apply-content-guardrails.use-case";
 import { ClaudeStoryAgent } from "../../infrastructure/agents/claude-story-agent";
 import { ClaudeArtAgent } from "../../infrastructure/agents/claude-art-agent";
 import { ClaudeDevAgent } from "../../infrastructure/agents/claude-dev-agent";
@@ -90,6 +91,7 @@ function buildOrchestrator(
     new FileCheckpointStore(outputRoot),
     new RetrieveWorldContextUseCase(worldRegistryRepository),
     worldRegistryRepository,
+    new ApplyContentGuardrailsUseCase(),
   );
 }
 
@@ -146,6 +148,8 @@ main().catch((err) => {
         err.issues.map((i) => `  - ${i}`).join("\n"),
     );
   } else if (err instanceof PackageValidationError) {
+    console.error(err.message);
+  } else if (err instanceof ContentGuardrailViolationError) {
     console.error(err.message);
   } else {
     console.error(err instanceof Error ? err.message : err);

@@ -10,6 +10,7 @@ import { LoadTargetRepoConventionsUseCase } from "./load-target-repo-conventions
 import { AssemblePackageUseCase } from "./assemble-package.use-case";
 import { ValidatePackageUseCase } from "./validate-package.use-case";
 import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
+import { ApplyContentGuardrailsUseCase } from "./apply-content-guardrails.use-case";
 
 export interface OrchestrateContentGenerationInput {
   brief: string;
@@ -48,6 +49,7 @@ export class OrchestrateContentGenerationUseCase {
     private readonly checkpoints: ICheckpointStore,
     private readonly retrieveWorldContext: RetrieveWorldContextUseCase,
     private readonly worldRegistryRepository: IWorldRegistryRepository,
+    private readonly applyContentGuardrails: ApplyContentGuardrailsUseCase,
   ) {}
 
   async execute(
@@ -75,6 +77,14 @@ export class OrchestrateContentGenerationUseCase {
       // so Story can avoid colliding with names this world already used.
       const worldContext = await this.retrieveWorldContext.execute(input.brief);
       story = await this.generateStory.execute(input.brief, worldContext);
+
+      // Guardrail check happens BEFORE the phase is checkpointed and BEFORE
+      // Art/Dev are ever dispatched — a story that fails here never reaches
+      // disk and never costs a second agent call. See
+      // apply-content-guardrails.use-case.ts for why this exists alongside
+      // (not instead of) the prompt-level instructions already in place.
+      this.applyContentGuardrails.execute(story);
+
       await this.checkpoints.save(input.runId, { phase: "story", story });
     }
 
