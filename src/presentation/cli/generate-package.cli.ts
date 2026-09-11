@@ -13,6 +13,8 @@ import { ClaudeDevAgent } from "../../infrastructure/agents/claude-dev-agent";
 import { FilesystemTargetRepoConventions } from "../../infrastructure/persistence/filesystem-target-repo-conventions";
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
 import { FileCheckpointStore } from "../../infrastructure/persistence/file-checkpoint-store";
+import { FileWorldRegistryRepository } from "../../infrastructure/persistence/file-world-registry-repository";
+import { RetrieveWorldContextUseCase } from "../../application/use-cases/retrieve-world-context.use-case";
 import { CliApprovalGate } from "../../infrastructure/security/cli-approval-gate";
 import { AutoApproveGate } from "../../infrastructure/security/auto-approve-gate";
 import type { IApprovalGate } from "../../application/ports/approval-gate.port";
@@ -76,6 +78,7 @@ function buildOrchestrator(
   approvalGate: IApprovalGate,
   outputRoot: string,
 ): OrchestrateContentGenerationUseCase {
+  const worldRegistryRepository = new FileWorldRegistryRepository(outputRoot);
   return new OrchestrateContentGenerationUseCase(
     new GenerateStoryUseCase(new ClaudeStoryAgent(approvalGate)),
     new LoadTargetRepoConventionsUseCase(new FilesystemTargetRepoConventions()),
@@ -85,6 +88,8 @@ function buildOrchestrator(
     new ValidatePackageUseCase(),
     new FileManifestWriter(),
     new FileCheckpointStore(outputRoot),
+    new RetrieveWorldContextUseCase(worldRegistryRepository),
+    worldRegistryRepository,
   );
 }
 

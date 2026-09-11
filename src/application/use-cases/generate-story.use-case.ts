@@ -7,8 +7,8 @@ import {
 export class GenerateStoryUseCase {
   constructor(private readonly storyAgent: IStoryAgent) {}
 
-  async execute(brief: string): Promise<StoryManifest> {
-    const raw = await this.storyAgent.generate(brief);
+  async execute(brief: string, worldContext = ""): Promise<StoryManifest> {
+    const raw = await this.storyAgent.generate(brief, worldContext);
     // Re-validate at the boundary even though the agent's outputFormat
     // already enforces the schema — a second, explicit check here means
     // this use-case's correctness doesn't depend on trusting the

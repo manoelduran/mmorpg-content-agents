@@ -1,12 +1,15 @@
 import type { IManifestWriter } from "../ports/manifest-writer.port";
 import type { ICheckpointStore } from "../ports/checkpoint-store.port";
+import type { IWorldRegistryRepository } from "../ports/world-registry-repository.port";
 import type { ContentPackage } from "../../domain/entities/content-package.entity";
+import { addEntry, buildWorldRegistryEntry } from "../../domain/entities/world-registry.entity";
 import { GenerateStoryUseCase } from "./generate-story.use-case";
 import { GenerateAssetsUseCase } from "./generate-assets.use-case";
 import { GenerateDevContentUseCase } from "./generate-dev-content.use-case";
 import { LoadTargetRepoConventionsUseCase } from "./load-target-repo-conventions.use-case";
 import { AssemblePackageUseCase } from "./assemble-package.use-case";
 import { ValidatePackageUseCase } from "./validate-package.use-case";
+import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
 
 export interface OrchestrateContentGenerationInput {
   brief: string;
@@ -43,6 +46,8 @@ export class OrchestrateContentGenerationUseCase {
     private readonly validatePackage: ValidatePackageUseCase,
     private readonly manifestWriter: IManifestWriter,
     private readonly checkpoints: ICheckpointStore,
+    private readonly retrieveWorldContext: RetrieveWorldContextUseCase,
+    private readonly worldRegistryRepository: IWorldRegistryRepository,
   ) {}
 
   async execute(
@@ -59,12 +64,17 @@ export class OrchestrateContentGenerationUseCase {
     }
 
     // 1. Story runs alone first — Art and Dev both depend on its output.
-    // Skip it entirely if a checkpoint already has it.
-    const story =
-      existing?.phase === "story" || existing?.phase === "assets_and_dev"
-        ? existing.story
-        : await this.generateStory.execute(input.brief);
-    if (!existing) {
+    // Skip it entirely if a checkpoint already has it (which also means
+    // retrieval doesn't need to run again — its only job is feeding Story).
+    let story;
+    if (existing?.phase === "story" || existing?.phase === "assets_and_dev") {
+      story = existing.story;
+    } else {
+      // Long-term memory / RAG: pull relevant past cities out of the World
+      // Registry before Story runs (see retrieve-world-context.use-case.ts),
+      // so Story can avoid colliding with names this world already used.
+      const worldContext = await this.retrieveWorldContext.execute(input.brief);
+      story = await this.generateStory.execute(input.brief, worldContext);
       await this.checkpoints.save(input.runId, { phase: "story", story });
     }
 
@@ -104,6 +114,15 @@ export class OrchestrateContentGenerationUseCase {
     const manifestPath = await this.manifestWriter.write(
       contentPackage,
       input.outputRoot,
+    );
+
+    // This is how long-term memory actually grows: only once a package has
+    // passed validation does its city become a fact the next run can
+    // retrieve. A failed/unresumed run never reaches this line, so the
+    // registry never records a city that doesn't really exist in output/.
+    const registry = await this.worldRegistryRepository.load();
+    await this.worldRegistryRepository.save(
+      addEntry(registry, buildWorldRegistryEntry(story, input.brief)),
     );
 
     await this.checkpoints.save(input.runId, {

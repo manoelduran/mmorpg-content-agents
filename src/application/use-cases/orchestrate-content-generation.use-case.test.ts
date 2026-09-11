@@ -7,6 +7,7 @@ import { GenerateDevContentUseCase } from "./generate-dev-content.use-case";
 import { LoadTargetRepoConventionsUseCase } from "./load-target-repo-conventions.use-case";
 import { AssemblePackageUseCase } from "./assemble-package.use-case";
 import { ValidatePackageUseCase } from "./validate-package.use-case";
+import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
 import type { IStoryAgent } from "../ports/story-agent.port";
 import type { IArtAgent } from "../ports/art-agent.port";
 import type { IDevAgent } from "../ports/dev-agent.port";
@@ -19,6 +20,8 @@ import type {
   ICheckpointStore,
   Checkpoint,
 } from "../ports/checkpoint-store.port";
+import type { IWorldRegistryRepository } from "../ports/world-registry-repository.port";
+import { EMPTY_WORLD_REGISTRY, type WorldRegistry } from "../../domain/entities/world-registry.entity";
 import type { StoryManifest } from "../../domain/value-objects/story-manifest.value-object";
 import type { AssetManifest } from "../../domain/value-objects/asset-manifest.value-object";
 import type { DevContent } from "../../domain/value-objects/dev-content.value-object";
@@ -35,8 +38,10 @@ const DEV = buildValidDev(STORY);
 
 class RecordingFakeStoryAgent implements IStoryAgent {
   calls: string[] = [];
-  async generate(brief: string): Promise<StoryManifest> {
+  receivedWorldContexts: string[] = [];
+  async generate(brief: string, worldContext = ""): Promise<StoryManifest> {
     this.calls.push(brief);
+    this.receivedWorldContexts.push(worldContext);
     return STORY;
   }
 }
@@ -90,7 +95,22 @@ class InMemoryCheckpointStore implements ICheckpointStore {
   }
 }
 
-function buildOrchestrator(checkpoints: ICheckpointStore = new InMemoryCheckpointStore()) {
+/** In-memory stand-in for FileWorldRegistryRepository — same port, no
+ * filesystem, so retrieval/memory-growth behavior is testable in isolation. */
+class InMemoryWorldRegistryRepository implements IWorldRegistryRepository {
+  registry: WorldRegistry = EMPTY_WORLD_REGISTRY;
+  async load(): Promise<WorldRegistry> {
+    return this.registry;
+  }
+  async save(registry: WorldRegistry): Promise<void> {
+    this.registry = registry;
+  }
+}
+
+function buildOrchestrator(
+  checkpoints: ICheckpointStore = new InMemoryCheckpointStore(),
+  worldRegistry: InMemoryWorldRegistryRepository = new InMemoryWorldRegistryRepository(),
+) {
   const storyAgent = new RecordingFakeStoryAgent();
   const artAgent = new RecordingFakeArtAgent();
   const devAgent = new RecordingFakeDevAgent();
@@ -106,9 +126,11 @@ function buildOrchestrator(checkpoints: ICheckpointStore = new InMemoryCheckpoin
     new ValidatePackageUseCase(),
     writer,
     checkpoints,
+    new RetrieveWorldContextUseCase(worldRegistry),
+    worldRegistry,
   );
 
-  return { orchestrator, storyAgent, artAgent, devAgent, writer, checkpoints };
+  return { orchestrator, storyAgent, artAgent, devAgent, writer, checkpoints, worldRegistry };
 }
 
 test("orchestrator runs Story first, then Art/Dev off its output, then writes a merged package", async () => {
@@ -158,6 +180,8 @@ test("orchestrator throws with every violation when Dev drifts from Story", asyn
     new ValidatePackageUseCase(),
     new RecordingFakeManifestWriter(),
     new InMemoryCheckpointStore(),
+    new RetrieveWorldContextUseCase(new InMemoryWorldRegistryRepository()),
+    new InMemoryWorldRegistryRepository(),
   );
 
   await assert.rejects(
@@ -201,6 +225,8 @@ test("resuming after a failure skips already-completed phases", async () => {
     new ValidatePackageUseCase(),
     firstAttempt.writer,
     checkpoints,
+    new RetrieveWorldContextUseCase(firstAttempt.worldRegistry),
+    firstAttempt.worldRegistry,
   );
 
   await assert.rejects(
@@ -263,4 +289,41 @@ test("resuming a run that already finished returns the cached package without ca
   assert.equal(second.storyAgent.calls.length, 0);
   assert.equal(second.artAgent.calls, 0);
   assert.equal(second.devAgent.calls, 0);
+});
+
+// ── Long-term memory / RAG: the actual point of this feature ──
+// A successful run must grow the World Registry, and a LATER run sharing
+// that same registry must retrieve it and hand Story a non-empty context
+// block — proving memory actually persists across runs and feeds forward,
+// not just that the plumbing compiles.
+test("a successful run grows the world registry, and a later related run retrieves it", async () => {
+  const worldRegistry = new InMemoryWorldRegistryRepository();
+  const brief = "a coastal pirate town, level 15-20";
+
+  const first = buildOrchestrator(new InMemoryCheckpointStore(), worldRegistry);
+  await first.orchestrator.execute({
+    brief,
+    outputRoot: "/fake/output",
+    backendPath: "/fake/mmorpg-backend",
+    runId: "run-memory-1",
+  });
+
+  // Nothing existed yet when Story ran the first time.
+  assert.equal(first.storyAgent.receivedWorldContexts[0], "");
+  assert.equal(worldRegistry.registry.entries.length, 1);
+  assert.equal(worldRegistry.registry.entries[0].cityId, STORY.cityId);
+
+  // A second, unrelated orchestrator instance (simulating a brand new CLI
+  // invocation) sharing only the same persisted registry.
+  const second = buildOrchestrator(new InMemoryCheckpointStore(), worldRegistry);
+  await second.orchestrator.execute({
+    brief, // same brief, guaranteed term overlap with what was just stored
+    outputRoot: "/fake/output",
+    backendPath: "/fake/mmorpg-backend",
+    runId: "run-memory-2",
+  });
+
+  const receivedContext = second.storyAgent.receivedWorldContexts[0];
+  assert.notEqual(receivedContext, "");
+  assert.match(receivedContext, new RegExp(STORY.cityName));
 });
