@@ -14,13 +14,18 @@
 - Every agent call MUST use `outputFormat: {type: 'json_schema', ...}` against a schema derived from `z.toJSONSchema(...)` of the corresponding domain value-object — never parse free text out of an agent's prose response.
 - Every use-case that receives an agent's output MUST re-validate it with the zod schema before doing anything else with it (`Schema.parse(raw)`), even though the SDK already constrained the shape. Don't trust the infrastructure layer wired it up correctly — verify at the boundary.
 
+## City template
+
+- The exact cardinalities (8 npcs, 10 quests, 4 portals/fields, 2 instances, drop counts, ...) live in exactly one place: `src/domain/value-objects/city-template.value-object.ts`. `story-manifest.value-object.ts` and `dev-content.value-object.ts` both import from it — never hardcode a count (`.length(8)`, a literal `10`, ...) directly in either of those files again; import the constant instead, so Story and Dev can never validate against different numbers.
+- When a count changes, it changes in `city-template.value-object.ts` and nowhere else — update the three agent prompts (they restate the numbers in prose for the model's benefit) and the README's "City Template v1" table in the same change, since those are documentation copies of the same source of truth, not independent decisions.
+
 ## Target-repo conventions
 
 - `mmorpg-backend`'s and `mmorpg-frontend`'s own `CLAUDE.md`/`AGENTS.md`/`.claude/docs/tdd-ticket-workflow.md` are NEVER copied into this repo. `FilesystemTargetRepoConventions` reads them live, every run, from wherever `--backend-path`/`--frontend-path` point. If you're tempted to paste their content into a file here — don't; wire a new read instead.
 
 ## Manifests, not code
 
-- Nothing in this repo writes to `mmorpg-backend`'s database, opens a PR against it, or runs a migration. The finished artifact of a run is `output/<zoneId>/manifest.json` plus its `assets/`. An installer that consumes this manifest via the backend's own use-cases is explicitly out of scope until a separate task takes it on (see `docs/ARCHITECTURE.md`).
+- Nothing in this repo writes to `mmorpg-backend`'s database, opens a PR against it, or runs a migration. The finished artifact of a run is `output/<cityId>/manifest.json` plus its `assets/`. An installer that consumes this manifest via the backend's own use-cases is explicitly out of scope until a separate task takes it on (see `docs/ARCHITECTURE.md`).
 
 ## Tests
 

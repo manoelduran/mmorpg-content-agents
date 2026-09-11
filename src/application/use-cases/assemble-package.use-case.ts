@@ -13,7 +13,7 @@ export class AssemblePackageUseCase {
     dev: DevContent,
   ): ContentPackage {
     return ContentPackageSchema.parse({
-      zoneId: story.zoneId,
+      cityId: story.cityId,
       generatedAt: new Date().toISOString(),
       story,
       assets,

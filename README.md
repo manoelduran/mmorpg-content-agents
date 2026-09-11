@@ -2,8 +2,9 @@
 
 A Clean Architecture multi-agent pipeline that turns a one-line brief
 ("a coastal pirate town, level 15-20") into a validated, self-contained
-**content package** — zone lore, NPCs, quests, monster stats, and sprite
-assets — for [Aetherbound Online](#), a Ragnarok-style pixel-art MMORPG.
+**content package** — city lore, NPCs, quests, fields, instances, monster
+stats, and sprite assets — for [Aetherbound Online](#), a Ragnarok-style
+pixel-art MMORPG.
 
 Built on the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
 with the same Clean Architecture / DDD discipline the game's own backend
@@ -27,14 +28,38 @@ non-issue as fifteen lines of TypeScript.
 | Agent | Runs as | Produces | Depends on |
 |---|---|---|---|
 | **Master** | plain TypeScript (`OrchestrateContentGenerationUseCase`) | the final `ContentPackage` | Story, Art, Dev's outputs |
-| **Story** | Claude Agent SDK call | `StoryManifest` (lore, NPCs, quests, monster flavor) | the brief only |
+| **Story** | Claude Agent SDK call | `StoryManifest` (lore, NPC roster, quests, portals/fields, instances) | the brief only |
 | **Art** | Claude Agent SDK call, tool-enabled | `AssetManifest` (sprite files + provenance) | `StoryManifest` |
-| **Dev** | Claude Agent SDK call | `DevContent` (map size, spawn positions, quest counters, monster stats) | `StoryManifest` + the target repo's own `CLAUDE.md`/`AGENTS.md` |
+| **Dev** | Claude Agent SDK call | `DevContent` (map sizes, spawn positions, quest counters, monster stats + drops) | `StoryManifest` + the target repo's own `CLAUDE.md`/`AGENTS.md` |
 
 Story runs first and alone, because Art and Dev both *depend* on the
 narrative as an input (Art needs atmosphere/theme, Dev needs which NPC
 gives which quest) — neither should be inventing story details on the
 side. Art and Dev then run in parallel off the same `StoryManifest`.
+
+## City Template v1
+
+Every generated city follows the same fixed shape — not a suggestion in a
+prompt, an actual zod-enforced structure (`city-template.value-object.ts`).
+A `StoryManifest` that doesn't match these counts fails validation before
+Art or Dev ever see it:
+
+| Element | Count | Detail |
+|---|---|---|
+| NPCs | **8** | 1 `MERCHANT`, 1 `TELEPORTER` (travels between nearby cities), 3 `QUEST_GIVER`, 1 `BLACKSMITH` (refines equipment), 2 `INSTANCE_MASTER` (one per instance) |
+| Quests | **10** | Given by the 3 `QUEST_GIVER` npcs. Each is `KILL_MONSTER` or `TALK_TO_NPC` — the latter exists specifically to teach the player this city's lore, on top of an XP reward |
+| Portals | **4** | One per cardinal direction (N/S/E/W) at the city's edges, each leading to exactly one field (1:1) |
+| Fields | **4** | One per portal, each with exactly 3 distinct monster types |
+| Field monster drops | **3 per monster** | Exactly 2 `COMMON` + 1 `RARE` |
+| Instances | **2** | Each owned by its own `INSTANCE_MASTER`, each with exactly 3 monsters: 2 `NORMAL` + 1 `BOSS` |
+
+This is enforced with `.length(n)` and `.superRefine()` on every relevant
+array in `src/domain/value-objects/city-template.value-object.ts` — see
+that file for the exact rules, and
+`src/domain/entities/content-package.entity.ts`'s
+`checkReferentialIntegrity` for the cross-references these counts alone
+can't catch (a quest given by a non-`QUEST_GIVER`, an instance boss with no
+matching sprite, etc.).
 
 ## What "manifest, not code" means
 
@@ -42,7 +67,7 @@ This pipeline never touches `mmorpg-backend`'s database, opens a PR
 against it, or runs a migration. A finished run produces:
 
 ```
-output/<zoneId>/
+output/<cityId>/
 ├── manifest.json        # the full ContentPackage, matching schemas/content-package.schema.json
 └── assets/
     └── *.png

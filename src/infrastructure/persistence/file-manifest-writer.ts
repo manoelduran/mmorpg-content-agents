@@ -5,7 +5,7 @@ import type { ContentPackage } from "../../domain/entities/content-package.entit
 
 export class FileManifestWriter implements IManifestWriter {
   async write(pkg: ContentPackage, outputRoot: string): Promise<string> {
-    const packageDir = join(outputRoot, pkg.zoneId);
+    const packageDir = join(outputRoot, pkg.cityId);
     await mkdir(packageDir, { recursive: true });
 
     const manifestPath = join(packageDir, "manifest.json");

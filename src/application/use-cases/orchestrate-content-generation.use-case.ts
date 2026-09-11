@@ -44,7 +44,7 @@ export class OrchestrateContentGenerationUseCase {
     // 1. Story runs alone first — Art and Dev both depend on its output.
     const story = await this.generateStory.execute(input.brief);
 
-    const assetsOutputDir = `${input.outputRoot}/${story.zoneId}/assets`;
+    const assetsOutputDir = `${input.outputRoot}/${story.cityId}/assets`;
 
     // 2. Art and Dev don't depend on each other, only on Story — run them
     // together. Dev additionally needs the target repo's live conventions.

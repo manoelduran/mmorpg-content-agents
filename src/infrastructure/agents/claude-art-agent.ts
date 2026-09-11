@@ -33,28 +33,41 @@ Claude cannot generate raster images itself. Your job is therefore split:
    haven't actually verified — for reused files, check with a quick script
    (e.g. PIL getbbox()/alpha inspection) before claiming it.
 
-Cover every npc and every monster in the story with exactly one asset entry
-each (entityId must match their id from the story).`;
+Cover every npc and every monster (both field monsters and instance
+monsters) in the story with exactly one asset entry each (entityId must
+match their id from the story).`;
 
 export class ClaudeArtAgent implements IArtAgent {
   async generate(
     story: StoryManifest,
     outputDir: string,
   ): Promise<AssetManifest> {
-    const prompt = `Zone: ${story.zoneName} (${story.zoneId})
+    const fieldMonsterLines = story.fields.flatMap((f) =>
+      f.monsters.map((m) => `- ${m.id}: ${m.name} — ${m.flavor} (field: ${f.name})`),
+    );
+    const instanceMonsterLines = story.instances.flatMap((i) =>
+      i.monsters.map(
+        (m) => `- ${m.id}: ${m.name} [${m.role}] — ${m.flavor} (instance: ${i.name})`,
+      ),
+    );
+
+    const prompt = `City: ${story.cityName} (${story.cityId})
 Atmosphere: ${story.atmosphereKeywords.join(", ")}
 Output directory for any reused/copied files: ${outputDir}
 
 NPCs:
 ${story.npcs.map((n) => `- ${n.id}: ${n.name} (${n.role})`).join("\n")}
 
-Monsters:
-${story.monsters.map((m) => `- ${m.id}: ${m.name} — ${m.flavor}`).join("\n")}`;
+Field monsters:
+${fieldMonsterLines.join("\n")}
+
+Instance monsters:
+${instanceMonsterLines.join("\n")}`;
 
     const raw = await runStructuredAgent<AssetManifest>(prompt, {
       agentType: "art",
       definition: {
-        description: "Sources or specifies sprite assets for a zone",
+        description: "Sources or specifies sprite assets for a city",
         prompt: ART_AGENT_PROMPT,
         tools: ["Bash", "Read", "Glob", "Write"],
       },

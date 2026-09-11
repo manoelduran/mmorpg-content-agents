@@ -28,7 +28,7 @@ function parseArgs(argv: string[]): CliArgs {
   const brief = get("--brief");
   if (!brief) {
     console.error(
-      'Usage: npm run generate -- --brief "<zone description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output]',
+      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output]',
     );
     process.exit(1);
   }
@@ -70,8 +70,15 @@ async function main() {
     frontendPath: args.frontendPath,
   });
 
-  console.log(`\nDone: ${pkg.zoneId}`);
-  console.log(`  ${pkg.story.npcs.length} npcs, ${pkg.story.quests.length} quests, ${pkg.story.monsters.length} monsters`);
+  const fieldMonsterCount = pkg.story.fields.reduce((n, f) => n + f.monsters.length, 0);
+  const instanceMonsterCount = pkg.story.instances.reduce((n, i) => n + i.monsters.length, 0);
+
+  console.log(`\nDone: ${pkg.cityId}`);
+  console.log(
+    `  ${pkg.story.npcs.length} npcs, ${pkg.story.quests.length} quests, ` +
+      `${pkg.story.portals.length} portals -> ${pkg.story.fields.length} fields (${fieldMonsterCount} monsters), ` +
+      `${pkg.story.instances.length} instances (${instanceMonsterCount} monsters)`,
+  );
   console.log(`  manifest: ${manifestPath}`);
 }
 

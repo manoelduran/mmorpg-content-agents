@@ -65,14 +65,23 @@ CLI brief
 └─────────────────────────────────────────┘
    │
    ▼
-output/<zoneId>/manifest.json + assets/*.png
+output/<cityId>/manifest.json + assets/*.png
 ```
+
+Each step's output shape is fixed by `city-template.value-object.ts` — see
+"City Template v1" in the [README](../README.md) for the exact counts (8
+npcs, 10 quests, 4 portals/fields, 2 instances, ...). That template is
+imported by `story-manifest.value-object.ts` *and* `dev-content.value-object.ts`,
+so Story and Dev are validated against the same constants — Dev can't
+structurally drift from what Story already committed to (it can still get
+individual ids wrong, which is what `checkReferentialIntegrity` in
+`content-package.entity.ts` catches).
 
 ## Layers (mirrors mmorpg-backend's Clean Architecture exactly)
 
 | Layer | Contains | Depends on |
 |---|---|---|
-| `domain/` | zod schemas + inferred types (`StoryManifest`, `AssetManifest`, `DevContent`, `ContentPackage`) and pure functions (`checkReferentialIntegrity`) | nothing |
+| `domain/` | zod schemas + inferred types (`StoryManifest`, `AssetManifest`, `DevContent`, `ContentPackage`, and the shared `city-template.value-object.ts` cardinalities they're both built from) and pure functions (`checkReferentialIntegrity`) | nothing |
 | `application/` | `ports/` (interfaces: `IStoryAgent`, `IArtAgent`, `IDevAgent`, `ITargetRepoConventions`, `IManifestWriter`) and `use-cases/` (orchestration + validation logic) | `domain/` only |
 | `infrastructure/` | Concrete adapters: `ClaudeStoryAgent`/`ClaudeArtAgent`/`ClaudeDevAgent` (Claude Agent SDK), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
 | `presentation/` | `generate-package.cli.ts` (the only place that wires ports to adapters via manual constructor injection) | everything |

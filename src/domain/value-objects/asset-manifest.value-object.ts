@@ -9,7 +9,9 @@ import { z } from "zod";
 export const AssetEntrySchema = z.object({
   entityId: z
     .string()
-    .describe("Matches an npc/monster/prop id from the StoryManifest"),
+    .describe(
+      "Matches an id from the StoryManifest: an npc, a fields[].monsters[] entry, or an instances[].monsters[] entry",
+    ),
   relativePath: z
     .string()
     .describe("Path under this package's assets/ folder, e.g. 'assets/npcs/harbor-master.png'"),
@@ -25,7 +27,7 @@ export const AssetEntrySchema = z.object({
 });
 
 export const AssetManifestSchema = z.object({
-  zoneId: z.string(),
+  cityId: z.string(),
   assets: z.array(AssetEntrySchema).min(1),
 });
 
