@@ -1,0 +1,498 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "zoneId": {
+      "type": "string"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "story": {
+      "type": "object",
+      "properties": {
+        "zoneId": {
+          "type": "string",
+          "description": "Stable slug for the whole package"
+        },
+        "zoneName": {
+          "type": "string"
+        },
+        "lore": {
+          "type": "string",
+          "description": "The zone's backstory — what Art and Dev both anchor to"
+        },
+        "atmosphereKeywords": {
+          "minItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Short mood/visual keywords for the Art agent, e.g. ['salt-worn wood', 'fog', 'rust']"
+        },
+        "levelRange": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "max": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        },
+        "npcs": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable slug, e.g. 'harbor-master'. Referenced by quests and by the Art/Dev agents' output — never renamed after Story produces it."
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "description": "QUEST_GIVER, MERCHANT, GATEKEEPER, or a short free-text role"
+              },
+              "personality": {
+                "type": "string"
+              },
+              "dialogueHooks": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Short lines/topics this NPC can open a conversation with"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "personality",
+              "dialogueHooks"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "quests": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "narrative": {
+                "type": "string",
+                "description": "Why the NPC is asking for this"
+              },
+              "giverNpcId": {
+                "type": "string",
+                "description": "Must match an id in npcs[]"
+              },
+              "objectiveSketch": {
+                "type": "string",
+                "description": "Plain-language objective, e.g. 'defeat 5 bilge rats near the docks' — the Dev agent turns this into concrete counters"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "narrative",
+              "giverNpcId",
+              "objectiveSketch"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "monsters": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "flavor": {
+                "type": "string",
+                "description": "One or two sentences of monster flavor text"
+              },
+              "threatTier": {
+                "type": "string",
+                "enum": [
+                  "trivial",
+                  "standard",
+                  "elite",
+                  "boss"
+                ],
+                "description": "Relative difficulty within this zone only"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "flavor",
+              "threatTier"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "zoneId",
+        "zoneName",
+        "lore",
+        "atmosphereKeywords",
+        "levelRange",
+        "npcs",
+        "quests",
+        "monsters"
+      ],
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "object",
+      "properties": {
+        "zoneId": {
+          "type": "string"
+        },
+        "assets": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entityId": {
+                "type": "string",
+                "description": "Matches an npc/monster/prop id from the StoryManifest"
+              },
+              "relativePath": {
+                "type": "string",
+                "description": "Path under this package's assets/ folder, e.g. 'assets/npcs/harbor-master.png'"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "reused-from-pack",
+                  "reused-from-repo",
+                  "generated"
+                ]
+              },
+              "sourceDetail": {
+                "type": "string",
+                "description": "Which pack/file it was cropped from, or a one-line description of the generation prompt"
+              },
+              "transparent": {
+                "type": "boolean",
+                "description": "Verified real alpha transparency, not a baked-in checkerboard"
+              }
+            },
+            "required": [
+              "entityId",
+              "relativePath",
+              "source",
+              "sourceDetail",
+              "transparent"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "zoneId",
+        "assets"
+      ],
+      "additionalProperties": false
+    },
+    "dev": {
+      "type": "object",
+      "properties": {
+        "zoneId": {
+          "type": "string"
+        },
+        "map": {
+          "type": "object",
+          "properties": {
+            "mapId": {
+              "type": "string",
+              "description": "Stable slug for this zone's map"
+            },
+            "name": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 9007199254740991
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 9007199254740991
+            },
+            "isCity": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "mapId",
+            "name",
+            "width",
+            "height",
+            "isCity"
+          ],
+          "additionalProperties": false
+        },
+        "npcPlacements": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "npcId": {
+                "type": "string",
+                "description": "Matches StoryManifest npcs[].id"
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "z": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "npcId",
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "questObjectives": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "questId": {
+                "type": "string",
+                "description": "Matches StoryManifest quests[].id"
+              },
+              "objectiveType": {
+                "type": "string",
+                "enum": [
+                  "KILL_MONSTER",
+                  "COLLECT_ITEM",
+                  "TALK_TO_NPC"
+                ]
+              },
+              "objectiveTarget": {
+                "type": "string",
+                "description": "Monster/item id/name this objective counts against"
+              },
+              "objectiveRequiredCount": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "minLevel": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "expReward": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "goldReward": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "itemRewardIds": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "prerequisiteQuestIds": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "questId",
+              "objectiveType",
+              "objectiveTarget",
+              "objectiveRequiredCount",
+              "minLevel",
+              "expReward",
+              "goldReward",
+              "itemRewardIds",
+              "prerequisiteQuestIds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "monsterStats": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "monsterId": {
+                "type": "string",
+                "description": "Matches StoryManifest monsters[].id"
+              },
+              "level": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxHp": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "attack": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "defense": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "expReward": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "goldReward": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "respawnTimeSeconds": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "spawnPositions": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "z": {
+                      "default": 0,
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "monsterId",
+              "level",
+              "maxHp",
+              "attack",
+              "defense",
+              "expReward",
+              "goldReward",
+              "respawnTimeSeconds",
+              "spawnPositions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "zoneId",
+        "map",
+        "npcPlacements",
+        "questObjectives",
+        "monsterStats"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "zoneId",
+    "generatedAt",
+    "story",
+    "assets",
+    "dev"
+  ],
+  "additionalProperties": false
+}

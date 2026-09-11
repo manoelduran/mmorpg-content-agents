@@ -1,0 +1,31 @@
+{
+  "name": "mmorpg-content-agents",
+  "version": "0.1.0",
+  "scripts": {
+    "generate": "tsx src/presentation/cli/generate-package.cli.ts",
+    "build:schema": "tsx src/presentation/cli/build-schema.cli.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "keywords": [
+    "claude-agent-sdk",
+    "clean-architecture",
+    "multi-agent",
+    "mmorpg",
+    "ddd"
+  ],
+  "author": "",
+  "license": "MIT",
+  "description": "Clean-architecture multi-agent content pipeline (Story, Art, Fullstack Dev, orchestrated by a Master agent) built on the Claude Agent SDK, generating structured content packages for the Aetherbound Online MMORPG.",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.268",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
