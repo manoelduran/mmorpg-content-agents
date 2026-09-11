@@ -139,6 +139,39 @@ framework, an agent SDK, or the filesystem. `application/` only knows about
 themselves or any use-case: a real instance of the "swappable adapter"
 promise this layering makes, not just a theoretical one.
 
+## Extending an existing city
+
+Every schema/prompt in this pipeline assumed a city is invented whole,
+from nothing — until Aethelgard. Reading `mmorpg-backend`'s actual seed
+data (`src/database/seeds/01_game_simulation_data.ts`) directly, rather
+than assuming, turned up a real, hand-built 50x50 map with 2 NPCs (Captain
+Jans, Guardião do Nexo) already placed on it — not a stub, a deliberately
+designed plaza with a fountain, a boardwalk, and houses. Generating a
+brand-new Aethelgard from scratch would have invented a competing map and
+duplicate/renamed NPCs, silently orphaning what a human already built.
+
+`ExistingCityContext` (`domain/value-objects/existing-city-context.value-object.ts`)
+is how a caller pins the facts that are NOT up for invention — a real
+map's identity/dimensions and specific NPCs with their id/name/role/
+position — passed in via `--existing-city <path>` (see
+`existing-cities/aethelgard.json` for the real example, sourced by hand
+from the seed file since a one-off TS seed isn't worth writing a parser
+for). Everything else about the city (the rest of the NPC roster, all
+quests, portals/fields, instances) is still generated fresh, exactly like
+a from-scratch city.
+
+Enforcing the pins reuses the retry loop that already exists for schema
+failures, instead of adding a second mechanism: `run-structured-openrouter-agent.ts`
+(and, for symmetry, `run-structured-agent.ts`) gained a generic
+`extraValidation?: (data: T) => string[]` hook, checked right after the
+zod schema succeeds. `OpenRouterStoryAgent`/`OpenRouterDevAgent` supply
+`checkExistingNpcsPreserved`/`checkExistingMapAndPlacementsPreserved` as
+that hook when an `existingCity` is given — any violation becomes exactly
+the same `StructuredOutputValidationError` a zod failure would, which the
+retry loop already knows how to feed back into the next attempt's prompt
+as corrective feedback. The generic infra never needs to know what
+"existing city" means; it just runs whatever check the caller supplies.
+
 ## Known limitation: the Art agent can't actually draw
 
 Claude doesn't generate raster images. `ClaudeArtAgent`'s real job is

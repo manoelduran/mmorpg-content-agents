@@ -26,6 +26,18 @@ export interface OpenRouterAgentConfig<T> {
   zodSchema: ZodType<T>;
   client: ChatCompletionClient;
   retryPolicy?: RetryPolicy;
+  /**
+   * A second check beyond the zod schema — same self-correction treatment
+   * as a schema failure (any issues returned here become a
+   * StructuredOutputValidationError, feeding straight back into the next
+   * attempt's prompt). This is how "extend an existing city" enforces that
+   * pinned NPCs/map survived unchanged (see
+   * existing-city-context.value-object.ts's checkExistingNpcsPreserved /
+   * checkExistingMapAndPlacementsPreserved) without this generic runner
+   * needing to know what an "existing city" even is — the caller supplies
+   * the check, this file just wires it into the same retry loop.
+   */
+  extraValidation?: (data: T) => string[];
 }
 
 interface AttemptInput {
@@ -121,6 +133,14 @@ async function runOnce<T>(
     throw new StructuredOutputValidationError(
       `Agent '${config.agentType}' produced output that failed validation`,
       issues,
+    );
+  }
+
+  const extraIssues = config.extraValidation?.(parsed.data) ?? [];
+  if (extraIssues.length > 0) {
+    throw new StructuredOutputValidationError(
+      `Agent '${config.agentType}' output failed extra validation`,
+      extraIssues,
     );
   }
 

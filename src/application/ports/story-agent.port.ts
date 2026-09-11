@@ -1,4 +1,5 @@
 import type { StoryManifest } from "../../domain/value-objects/story-manifest.value-object";
+import type { ExistingCityContext } from "../../domain/value-objects/existing-city-context.value-object";
 
 export interface IStoryAgent {
   /**
@@ -11,6 +12,15 @@ export interface IStoryAgent {
    * from long-term memory, or "" when nothing is relevant / this is the
    * first run ever. Optional so fakes/tests that don't care about memory
    * can omit it entirely.
+   *
+   * `existingCity` pins facts that must survive into the output unchanged
+   * — a city (like Aethelgard) that already partially exists, with real
+   * NPCs already placed in the live game. See
+   * existing-city-context.value-object.ts. Omitted for a from-scratch city.
    */
-  generate(brief: string, worldContext?: string): Promise<StoryManifest>;
+  generate(
+    brief: string,
+    worldContext?: string,
+    existingCity?: ExistingCityContext,
+  ): Promise<StoryManifest>;
 }

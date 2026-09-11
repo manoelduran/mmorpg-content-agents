@@ -1,0 +1,25 @@
+{
+  "cityId": "aethelgard",
+  "cityName": "Aethelgard",
+  "map": {
+    "mapId": "aethelgard-map",
+    "name": "Aethelgard",
+    "width": 50,
+    "height": 50,
+    "isCity": true
+  },
+  "existingNpcs": [
+    {
+      "id": "captain-jans",
+      "name": "Captain Jans",
+      "role": "QUEST_GIVER",
+      "position": { "x": 20, "y": 20, "z": 0 }
+    },
+    {
+      "id": "guardiao-do-nexo",
+      "name": "Guardião do Nexo",
+      "role": "QUEST_GIVER",
+      "position": { "x": 28, "y": 20, "z": 0 }
+    }
+  ]
+}

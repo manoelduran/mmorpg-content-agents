@@ -9,9 +9,12 @@ import { AssemblePackageUseCase } from "./assemble-package.use-case";
 import { ValidatePackageUseCase } from "./validate-package.use-case";
 import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
 import { ApplyContentGuardrailsUseCase } from "./apply-content-guardrails.use-case";
+import { LoadExistingCityContextUseCase } from "./load-existing-city-context.use-case";
 import type { IStoryAgent } from "../ports/story-agent.port";
 import type { IArtAgent } from "../ports/art-agent.port";
 import type { IDevAgent } from "../ports/dev-agent.port";
+import type { IExistingCityContextProvider } from "../ports/existing-city-context-provider.port";
+import type { ExistingCityContext } from "../../domain/value-objects/existing-city-context.value-object";
 import type {
   ITargetRepoConventions,
   TargetRepoConventions,
@@ -40,9 +43,15 @@ const DEV = buildValidDev(STORY);
 class RecordingFakeStoryAgent implements IStoryAgent {
   calls: string[] = [];
   receivedWorldContexts: string[] = [];
-  async generate(brief: string, worldContext = ""): Promise<StoryManifest> {
+  receivedExistingCities: (ExistingCityContext | undefined)[] = [];
+  async generate(
+    brief: string,
+    worldContext = "",
+    existingCity?: ExistingCityContext,
+  ): Promise<StoryManifest> {
     this.calls.push(brief);
     this.receivedWorldContexts.push(worldContext);
+    this.receivedExistingCities.push(existingCity);
     return STORY;
   }
 }
@@ -60,12 +69,15 @@ class RecordingFakeArtAgent implements IArtAgent {
 class RecordingFakeDevAgent implements IDevAgent {
   calls = 0;
   received?: { story: StoryManifest; conventions: TargetRepoConventions };
+  receivedExistingCities: (ExistingCityContext | undefined)[] = [];
   async generate(
     story: StoryManifest,
     conventions: TargetRepoConventions,
+    existingCity?: ExistingCityContext,
   ): Promise<DevContent> {
     this.calls++;
     this.received = { story, conventions };
+    this.receivedExistingCities.push(existingCity);
     return DEV;
   }
 }
@@ -108,9 +120,21 @@ class InMemoryWorldRegistryRepository implements IWorldRegistryRepository {
   }
 }
 
+/** In-memory stand-in for FilesystemExistingCityContextProvider — keyed by
+ * path, same port, no filesystem. */
+class InMemoryExistingCityContextProvider implements IExistingCityContextProvider {
+  constructor(private readonly byPath: Record<string, ExistingCityContext> = {}) {}
+  async load(path: string): Promise<ExistingCityContext> {
+    const context = this.byPath[path];
+    if (!context) throw new Error(`no fake existing-city context registered for '${path}'`);
+    return context;
+  }
+}
+
 function buildOrchestrator(
   checkpoints: ICheckpointStore = new InMemoryCheckpointStore(),
   worldRegistry: InMemoryWorldRegistryRepository = new InMemoryWorldRegistryRepository(),
+  existingCityProvider: IExistingCityContextProvider = new InMemoryExistingCityContextProvider(),
 ) {
   const storyAgent = new RecordingFakeStoryAgent();
   const artAgent = new RecordingFakeArtAgent();
@@ -130,6 +154,7 @@ function buildOrchestrator(
     new RetrieveWorldContextUseCase(worldRegistry),
     worldRegistry,
     new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(existingCityProvider),
   );
 
   return { orchestrator, storyAgent, artAgent, devAgent, writer, checkpoints, worldRegistry };
@@ -185,6 +210,7 @@ test("orchestrator throws with every violation when Dev drifts from Story", asyn
     new RetrieveWorldContextUseCase(new InMemoryWorldRegistryRepository()),
     new InMemoryWorldRegistryRepository(),
     new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new InMemoryExistingCityContextProvider()),
   );
 
   await assert.rejects(
@@ -231,6 +257,7 @@ test("resuming after a failure skips already-completed phases", async () => {
     new RetrieveWorldContextUseCase(firstAttempt.worldRegistry),
     firstAttempt.worldRegistry,
     new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new InMemoryExistingCityContextProvider()),
   );
 
   await assert.rejects(
@@ -361,6 +388,7 @@ test("orchestrator stops before Art/Dev when Story output fails content guardrai
     new RetrieveWorldContextUseCase(worldRegistry),
     worldRegistry,
     new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new InMemoryExistingCityContextProvider()),
   );
 
   await assert.rejects(
@@ -377,4 +405,53 @@ test("orchestrator stops before Art/Dev when Story output fails content guardrai
   assert.equal(artAgent.calls, 0);
   assert.equal(devAgent.calls, 0);
   assert.equal(worldRegistry.registry.entries.length, 0);
+});
+
+// ── Extending an existing city: the actual point of this feature ──
+// When a path is given, both Story and Dev must receive the loaded
+// ExistingCityContext; when it's omitted, neither should — extending a
+// city is opt-in, never assumed.
+const EXISTING_CITY: ExistingCityContext = {
+  cityId: STORY.cityId,
+  cityName: STORY.cityName,
+  map: { mapId: "aethelgard-map", name: "Aethelgard", width: 50, height: 50, isCity: true },
+  existingNpcs: [
+    { id: "merchant-1", name: "Merchant", role: "MERCHANT", position: { x: 20, y: 20, z: 0 } },
+  ],
+};
+
+test("existingCityContextPath flows the loaded context into both Story and Dev", async () => {
+  const provider = new InMemoryExistingCityContextProvider({
+    "existing-cities/test.json": EXISTING_CITY,
+  });
+  const { orchestrator, storyAgent, devAgent } = buildOrchestrator(
+    new InMemoryCheckpointStore(),
+    new InMemoryWorldRegistryRepository(),
+    provider,
+  );
+
+  await orchestrator.execute({
+    brief: "a coastal pirate town, level 15-20",
+    outputRoot: "/fake/output",
+    backendPath: "/fake/mmorpg-backend",
+    runId: "run-existing-city",
+    existingCityContextPath: "existing-cities/test.json",
+  });
+
+  assert.deepEqual(storyAgent.receivedExistingCities[0], EXISTING_CITY);
+  assert.deepEqual(devAgent.receivedExistingCities[0], EXISTING_CITY);
+});
+
+test("omitting existingCityContextPath means neither agent receives one", async () => {
+  const { orchestrator, storyAgent, devAgent } = buildOrchestrator();
+
+  await orchestrator.execute({
+    brief: "a coastal pirate town, level 15-20",
+    outputRoot: "/fake/output",
+    backendPath: "/fake/mmorpg-backend",
+    runId: "run-no-existing-city",
+  });
+
+  assert.equal(storyAgent.receivedExistingCities[0], undefined);
+  assert.equal(devAgent.receivedExistingCities[0], undefined);
 });

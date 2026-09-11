@@ -134,3 +134,21 @@ test("runStructuredOpenRouterAgent: malformed JSON is treated as a self-correcta
   assert.deepEqual(result, { name: "d", count: 4 });
   assert.equal(client.calls.length, 2);
 });
+
+test("runStructuredOpenRouterAgent: extraValidation failures trigger the same self-correction as a schema failure", async () => {
+  const client = new FakeChatCompletionClient([
+    ok({ name: "wrong-name", count: 1 }), // passes zod, fails extraValidation below
+    ok({ name: "pinned-name", count: 1 }),
+  ]);
+
+  const result = await runStructuredOpenRouterAgent("original prompt", {
+    ...baseConfig(client),
+    extraValidation: (data) =>
+      data.name === "pinned-name" ? [] : [`name must be exactly 'pinned-name', got '${data.name}'`],
+  });
+
+  assert.deepEqual(result, { name: "pinned-name", count: 1 });
+  assert.equal(client.calls.length, 2);
+  assert.match(client.calls[1]!.userPrompt, /YOUR PREVIOUS ANSWER WAS INVALID/);
+  assert.match(client.calls[1]!.userPrompt, /must be exactly 'pinned-name'/);
+});

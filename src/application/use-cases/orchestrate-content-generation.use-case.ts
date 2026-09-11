@@ -11,6 +11,7 @@ import { AssemblePackageUseCase } from "./assemble-package.use-case";
 import { ValidatePackageUseCase } from "./validate-package.use-case";
 import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
 import { ApplyContentGuardrailsUseCase } from "./apply-content-guardrails.use-case";
+import { LoadExistingCityContextUseCase } from "./load-existing-city-context.use-case";
 
 export interface OrchestrateContentGenerationInput {
   brief: string;
@@ -22,6 +23,10 @@ export interface OrchestrateContentGenerationInput {
    * runId resumes from the last completed phase instead of redoing (and
    * re-paying for) work already finished. */
   runId: string;
+  /** Path to a JSON file describing a city that already partially exists
+   * (see existing-city-context.value-object.ts) — e.g.
+   * existing-cities/aethelgard.json. Omitted for a from-scratch city. */
+  existingCityContextPath?: string;
 }
 
 export interface OrchestrateContentGenerationResult {
@@ -50,6 +55,7 @@ export class OrchestrateContentGenerationUseCase {
     private readonly retrieveWorldContext: RetrieveWorldContextUseCase,
     private readonly worldRegistryRepository: IWorldRegistryRepository,
     private readonly applyContentGuardrails: ApplyContentGuardrailsUseCase,
+    private readonly loadExistingCityContext: LoadExistingCityContextUseCase,
   ) {}
 
   async execute(
@@ -65,6 +71,13 @@ export class OrchestrateContentGenerationUseCase {
       return { package: existing.package, manifestPath: existing.manifestPath };
     }
 
+    // Loaded once here (not checkpointed — deterministically re-derivable
+    // from the path on every resume, and skipped entirely above when the
+    // run already finished) since both Story and Dev need it below.
+    const existingCity = input.existingCityContextPath
+      ? await this.loadExistingCityContext.execute(input.existingCityContextPath)
+      : undefined;
+
     // 1. Story runs alone first — Art and Dev both depend on its output.
     // Skip it entirely if a checkpoint already has it (which also means
     // retrieval doesn't need to run again — its only job is feeding Story).
@@ -76,7 +89,7 @@ export class OrchestrateContentGenerationUseCase {
       // Registry before Story runs (see retrieve-world-context.use-case.ts),
       // so Story can avoid colliding with names this world already used.
       const worldContext = await this.retrieveWorldContext.execute(input.brief);
-      story = await this.generateStory.execute(input.brief, worldContext);
+      story = await this.generateStory.execute(input.brief, worldContext, existingCity);
 
       // Guardrail check happens BEFORE the phase is checkpointed and BEFORE
       // Art/Dev are ever dispatched — a story that fails here never reaches
@@ -102,7 +115,7 @@ export class OrchestrateContentGenerationUseCase {
         this.generateAssets.execute(story, assetsOutputDir),
       ]);
       assets = generatedAssets;
-      dev = await this.generateDevContent.execute(story, conventions);
+      dev = await this.generateDevContent.execute(story, conventions, existingCity);
       await this.checkpoints.save(input.runId, {
         phase: "assets_and_dev",
         story,

@@ -5,6 +5,7 @@ import {
   DevContentSchema,
   type DevContent,
 } from "../../domain/value-objects/dev-content.value-object";
+import type { ExistingCityContext } from "../../domain/value-objects/existing-city-context.value-object";
 
 export class GenerateDevContentUseCase {
   constructor(private readonly devAgent: IDevAgent) {}
@@ -12,8 +13,11 @@ export class GenerateDevContentUseCase {
   async execute(
     story: StoryManifest,
     conventions: TargetRepoConventions,
+    existingCity?: ExistingCityContext,
   ): Promise<DevContent> {
-    const raw = await this.devAgent.generate(story, conventions);
+    // Same reasoning as GenerateStoryUseCase.execute(): the pinned-map/
+    // pinned-position check lives inside the agent's retry loop, not here.
+    const raw = await this.devAgent.generate(story, conventions, existingCity);
     return DevContentSchema.parse(raw);
   }
 }

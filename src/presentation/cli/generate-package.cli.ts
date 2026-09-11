@@ -16,6 +16,8 @@ import { FilesystemTargetRepoConventions } from "../../infrastructure/persistenc
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
 import { FileCheckpointStore } from "../../infrastructure/persistence/file-checkpoint-store";
 import { FileWorldRegistryRepository } from "../../infrastructure/persistence/file-world-registry-repository";
+import { FilesystemExistingCityContextProvider } from "../../infrastructure/persistence/filesystem-existing-city-context-provider";
+import { LoadExistingCityContextUseCase } from "../../application/use-cases/load-existing-city-context.use-case";
 import { RetrieveWorldContextUseCase } from "../../application/use-cases/retrieve-world-context.use-case";
 import { CliApprovalGate } from "../../infrastructure/security/cli-approval-gate";
 import { AutoApproveGate } from "../../infrastructure/security/auto-approve-gate";
@@ -38,6 +40,7 @@ interface CliArgs {
   autoApprove: boolean;
   runId: string;
   isResumedRun: boolean;
+  existingCityContextPath?: string;
 }
 
 /**
@@ -86,7 +89,7 @@ function parseArgs(argv: string[]): CliArgs {
   const brief = get("--brief");
   if (!brief) {
     console.error(
-      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes] [--run-id <id>]',
+      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes] [--run-id <id>] [--existing-city <path>]',
     );
     process.exit(1);
   }
@@ -115,6 +118,13 @@ function parseArgs(argv: string[]): CliArgs {
     autoApprove: argv.includes("--yes") || argv.includes("--auto-approve"),
     runId: explicitRunId ?? randomUUID(),
     isResumedRun: explicitRunId !== undefined,
+    // A city that already partially exists — see
+    // existing-city-context.value-object.ts and existing-cities/aethelgard.json
+    // for a real example. Left resolved relative to cwd (not backendPath),
+    // since this file lives in this repo, not the target one.
+    existingCityContextPath: get("--existing-city")
+      ? resolve(get("--existing-city")!)
+      : undefined,
   };
 }
 
@@ -146,6 +156,7 @@ function buildOrchestrator(
     new RetrieveWorldContextUseCase(worldRegistryRepository),
     worldRegistryRepository,
     new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new FilesystemExistingCityContextProvider()),
   );
 }
 
@@ -177,6 +188,9 @@ async function main() {
   } else {
     console.log(`Run id: ${args.runId} (pass --run-id ${args.runId} to resume this run if it fails)`);
   }
+  if (args.existingCityContextPath) {
+    console.log(`Extending existing city from: ${args.existingCityContextPath}`);
+  }
   console.log(`Generating content package for brief: "${args.brief}"`);
   const { package: pkg, manifestPath } = await orchestrator.execute({
     brief: args.brief,
@@ -184,6 +198,7 @@ async function main() {
     backendPath: args.backendPath,
     frontendPath: args.frontendPath,
     runId: args.runId,
+    existingCityContextPath: args.existingCityContextPath,
   });
 
   const fieldMonsterCount = pkg.story.fields.reduce((n, f) => n + f.monsters.length, 0);

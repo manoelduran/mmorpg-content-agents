@@ -44,6 +44,12 @@ export interface StructuredAgentConfig<T> {
    * nothing to cap).
    */
   maxBudgetUsd?: number;
+  /** A second check beyond the zod schema, fed back as self-correction on
+   * failure just like a schema violation — see the same field on
+   * run-structured-openrouter-agent.ts's OpenRouterAgentConfig for the
+   * full reasoning (this file mirrors it for symmetry, even though Art —
+   * the only agent still on this path — doesn't use it yet). */
+  extraValidation?: (data: T) => string[];
 }
 
 /** The unit of work retried by withRetry — just the prompt text, since
@@ -169,6 +175,14 @@ async function runOnce<T>(
     throw new StructuredOutputValidationError(
       `Agent '${config.agentType}' produced output that failed validation`,
       issues,
+    );
+  }
+
+  const extraIssues = config.extraValidation?.(parsed.data) ?? [];
+  if (extraIssues.length > 0) {
+    throw new StructuredOutputValidationError(
+      `Agent '${config.agentType}' output failed extra validation`,
+      extraIssues,
     );
   }
 

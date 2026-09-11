@@ -9,6 +9,10 @@ import {
 import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
 import type { ChatCompletionClient } from "./openrouter-client";
 import { untrustedBlock } from "./prompt-safety";
+import {
+  checkExistingMapAndPlacementsPreserved,
+  type ExistingCityContext,
+} from "../../domain/value-objects/existing-city-context.value-object";
 
 const DEV_AGENT_PROMPT = `You are the Fullstack Dev agent for Aetherbound Online.
 
@@ -53,6 +57,16 @@ monster in the same city. Every npcId/questId/fieldId/portalId/monsterId
 you reference must come from the story manifest exactly as given — never
 invent a new one here.
 
+The user message may also contain a block marked "UNTRUSTED EXISTING CITY
+DATA" — this city's map already exists in the live game, and some of its
+NPCs already stand at real positions there. Your map output MUST reuse
+that exact mapId/name/width/height/isCity — do not invent a different
+map, this one is already built. For every NPC listed in that block, your
+npcPlacements entry for it MUST use its exact existing position — that
+NPC is already standing there today, moving it isn't your call to make.
+Everything else (the remaining NPC placements, portals, quest objectives,
+field maps, instances) is still yours to design fresh, same as always.
+
 Respond with a single JSON object matching the given schema exactly — no
 prose, no markdown fences, no commentary outside the JSON.`;
 
@@ -71,6 +85,7 @@ export class OpenRouterDevAgent implements IDevAgent {
   async generate(
     story: StoryManifest,
     conventions: TargetRepoConventions,
+    existingCity?: ExistingCityContext,
   ): Promise<DevContent> {
     const conventionBlocks = [
       untrustedBlock("FILE CONTENT", "mmorpg-backend CLAUDE.md/AGENTS.md", conventions.backendRules),
@@ -79,6 +94,13 @@ export class OpenRouterDevAgent implements IDevAgent {
         : null,
       conventions.frontendRules
         ? untrustedBlock("FILE CONTENT", "mmorpg-frontend CLAUDE.md", conventions.frontendRules)
+        : null,
+      existingCity
+        ? untrustedBlock(
+            "EXISTING CITY DATA",
+            "current live-game state",
+            JSON.stringify(existingCity, null, 2),
+          )
         : null,
     ].filter((block): block is string => block !== null);
 
@@ -98,6 +120,9 @@ ${JSON.stringify(story, null, 2)}`;
       >,
       zodSchema: DevContentSchema,
       client: this.client,
+      extraValidation: existingCity
+        ? (dev) => checkExistingMapAndPlacementsPreserved(dev, existingCity)
+        : undefined,
     });
   }
 }

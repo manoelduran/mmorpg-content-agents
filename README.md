@@ -108,6 +108,25 @@ flags above if yours live elsewhere. Their `CLAUDE.md`/`AGENTS.md` are read
 live off disk every run, never copied into this repo (see
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)).
 
+### Extending a city that already partially exists
+
+Not every city starts from nothing — Aethelgard, this game's own anchor
+city, already exists as a hand-built map with 2 NPCs placed on it. Add
+`--existing-city <path-to-json>` to pin those facts so Story/Dev complete
+the city instead of inventing a competing one:
+
+```bash
+npm run generate -- --brief "Aethelgard, cidade âncora de 'O Paradoxo das Eras', nível 10-20" \
+  --existing-city existing-cities/aethelgard.json \
+  --backend-path ../mmorpg-backend --frontend-path ../mmorpg-frontend
+```
+
+See `existing-cities/aethelgard.json` for the exact shape (map identity +
+existing NPCs with their real positions) and
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how preserving those
+pinned facts is enforced (reusing the same self-correction retry loop a
+schema failure already triggers, not a separate mechanism).
+
 Other scripts:
 
 ```bash
