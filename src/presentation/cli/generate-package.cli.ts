@@ -11,12 +11,22 @@ import { ClaudeArtAgent } from "../../infrastructure/agents/claude-art-agent";
 import { ClaudeDevAgent } from "../../infrastructure/agents/claude-dev-agent";
 import { FilesystemTargetRepoConventions } from "../../infrastructure/persistence/filesystem-target-repo-conventions";
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
+import { CliApprovalGate } from "../../infrastructure/security/cli-approval-gate";
+import { AutoApproveGate } from "../../infrastructure/security/auto-approve-gate";
+import type { IApprovalGate } from "../../application/ports/approval-gate.port";
+import {
+  AgentRefusalError,
+  TransientAgentError,
+  StructuredOutputValidationError,
+} from "../../domain/errors/agent-errors";
+import { PackageValidationError } from "../../application/use-cases/validate-package.use-case";
 
 interface CliArgs {
   brief: string;
   outputRoot: string;
   backendPath: string;
   frontendPath?: string;
+  autoApprove: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -28,7 +38,7 @@ function parseArgs(argv: string[]): CliArgs {
   const brief = get("--brief");
   if (!brief) {
     console.error(
-      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output]',
+      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes]',
     );
     process.exit(1);
   }
@@ -40,18 +50,24 @@ function parseArgs(argv: string[]): CliArgs {
     frontendPath: get("--frontend-path")
       ? resolve(get("--frontend-path")!)
       : resolve("../mmorpg-frontend"),
+    // Secure by default: a human approves every side-effecting tool call
+    // unless they explicitly opt out with --yes (for CI/unattended runs).
+    // See cli-approval-gate.ts / auto-approve-gate.ts.
+    autoApprove: argv.includes("--yes") || argv.includes("--auto-approve"),
   };
 }
 
 // Manual constructor injection, no DI container — matches this project's
 // "explicit code over abstractions without purpose" rule (see AGENTS.md).
 // This is the only place every port gets wired to its concrete adapter.
-function buildOrchestrator(): OrchestrateContentGenerationUseCase {
+function buildOrchestrator(
+  approvalGate: IApprovalGate,
+): OrchestrateContentGenerationUseCase {
   return new OrchestrateContentGenerationUseCase(
-    new GenerateStoryUseCase(new ClaudeStoryAgent()),
+    new GenerateStoryUseCase(new ClaudeStoryAgent(approvalGate)),
     new LoadTargetRepoConventionsUseCase(new FilesystemTargetRepoConventions()),
-    new GenerateAssetsUseCase(new ClaudeArtAgent()),
-    new GenerateDevContentUseCase(new ClaudeDevAgent()),
+    new GenerateAssetsUseCase(new ClaudeArtAgent(approvalGate)),
+    new GenerateDevContentUseCase(new ClaudeDevAgent(approvalGate)),
     new AssemblePackageUseCase(),
     new ValidatePackageUseCase(),
     new FileManifestWriter(),
@@ -60,8 +76,14 @@ function buildOrchestrator(): OrchestrateContentGenerationUseCase {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const orchestrator = buildOrchestrator();
+  const approvalGate: IApprovalGate = args.autoApprove
+    ? new AutoApproveGate()
+    : new CliApprovalGate();
+  const orchestrator = buildOrchestrator(approvalGate);
 
+  if (args.autoApprove) {
+    console.log("[--yes] Running unattended — every tool call is auto-approved and logged.");
+  }
   console.log(`Generating content package for brief: "${args.brief}"`);
   const { package: pkg, manifestPath } = await orchestrator.execute({
     brief: args.brief,
@@ -82,7 +104,26 @@ async function main() {
   console.log(`  manifest: ${manifestPath}`);
 }
 
+// Categorized error output instead of a raw stack trace: which error
+// class it is (see domain/errors/agent-errors.ts) tells the person
+// running this exactly what kind of problem they're looking at and
+// whether trying again is worth it.
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  if (err instanceof AgentRefusalError) {
+    console.error(`Agent refused (retrying won't help): ${err.message}`);
+  } else if (err instanceof TransientAgentError) {
+    console.error(
+      `Agent call failed after retrying (transient — safe to try again): ${err.message}`,
+    );
+  } else if (err instanceof StructuredOutputValidationError) {
+    console.error(
+      `Agent output stayed invalid after retrying with corrective feedback:\n` +
+        err.issues.map((i) => `  - ${i}`).join("\n"),
+    );
+  } else if (err instanceof PackageValidationError) {
+    console.error(err.message);
+  } else {
+    console.error(err instanceof Error ? err.message : err);
+  }
   process.exit(1);
 });

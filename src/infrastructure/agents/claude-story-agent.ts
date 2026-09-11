@@ -13,6 +13,7 @@ import {
   INSTANCE_MONSTER_ROLE_COUNTS,
 } from "../../domain/value-objects/story-manifest.value-object";
 import { runStructuredAgent } from "./run-structured-agent";
+import type { IApprovalGate } from "../../application/ports/approval-gate.port";
 
 const STORY_AGENT_PROMPT = `You are the Story/Lore agent for Aetherbound Online, a fantasy MMORPG.
 
@@ -57,8 +58,15 @@ so never reuse an id for two different things and never rename one
 mid-response.`;
 
 export class ClaudeStoryAgent implements IStoryAgent {
+  constructor(private readonly approvalGate: IApprovalGate) {}
+
   async generate(brief: string): Promise<StoryManifest> {
-    const raw = await runStructuredAgent<StoryManifest>(brief, {
+    // Story has tools: [] (see below) — it never calls a tool, so
+    // approvalGate never actually fires for this agent. We still pass it
+    // through (rather than special-casing "tool-less agents") so the
+    // wiring stays uniform across all three agents and doesn't silently
+    // break if Story ever gains a tool later.
+    return runStructuredAgent<StoryManifest>(brief, {
       agentType: "story",
       definition: {
         description:
@@ -70,7 +78,8 @@ export class ClaudeStoryAgent implements IStoryAgent {
         string,
         unknown
       >,
+      zodSchema: StoryManifestSchema,
+      approvalGate: this.approvalGate,
     });
-    return StoryManifestSchema.parse(raw);
   }
 }

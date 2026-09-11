@@ -6,6 +6,7 @@ import {
   type AssetManifest,
 } from "../../domain/value-objects/asset-manifest.value-object";
 import { runStructuredAgent } from "./run-structured-agent";
+import type { IApprovalGate } from "../../application/ports/approval-gate.port";
 
 const ART_AGENT_PROMPT = `You are the Art agent for Aetherbound Online, a pixel-art top-down MMORPG.
 
@@ -38,6 +39,8 @@ monsters) in the story with exactly one asset entry each (entityId must
 match their id from the story).`;
 
 export class ClaudeArtAgent implements IArtAgent {
+  constructor(private readonly approvalGate: IApprovalGate) {}
+
   async generate(
     story: StoryManifest,
     outputDir: string,
@@ -64,7 +67,11 @@ ${fieldMonsterLines.join("\n")}
 Instance monsters:
 ${instanceMonsterLines.join("\n")}`;
 
-    const raw = await runStructuredAgent<AssetManifest>(prompt, {
+    // Art is the one agent that actually has side-effecting tools (Bash
+    // can run arbitrary commands, Write creates files) — this is exactly
+    // the agent approvalGate exists for. Read/Glob are auto-approved by
+    // CliApprovalGate; Bash/Write stop and ask.
+    return runStructuredAgent<AssetManifest>(prompt, {
       agentType: "art",
       definition: {
         description: "Sources or specifies sprite assets for a city",
@@ -75,7 +82,8 @@ ${instanceMonsterLines.join("\n")}`;
         string,
         unknown
       >,
+      zodSchema: AssetManifestSchema,
+      approvalGate: this.approvalGate,
     });
-    return AssetManifestSchema.parse(raw);
   }
 }
