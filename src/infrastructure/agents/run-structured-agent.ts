@@ -1,4 +1,4 @@
-import { query, type AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
+import { query, type AgentDefinition, type ModelUsage } from "@anthropic-ai/claude-agent-sdk";
 import type { ZodType } from "zod";
 import {
   withRetry,
@@ -97,6 +97,7 @@ async function runOnce<T>(
           );
         }
         raw = message.structured_output;
+        logCacheUsage(config.agentType, message.modelUsage);
         break;
       }
     }
@@ -136,6 +137,52 @@ async function runOnce<T>(
   }
 
   return parsed.data;
+}
+
+/**
+ * ── AI ENGINEERING CONCEPT: prompt caching, honestly ──
+ *
+ * The SDK exposes a real cache-boundary mechanism — `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`
+ * inside a `string[]` `Options.systemPrompt`, and `systemPromptSnapshot` for
+ * reusing a recorded system prompt verbatim across a resumed session's later
+ * turns (see sdk.d.ts). Neither applies here: both are about the MAIN
+ * thread's session-level system prompt persisting across multiple resumed
+ * turns of the SAME session. Every call this file makes is a one-shot
+ * `query()` that delegates to a named subagent (`agent`/`agents`) and never
+ * resumes — a brand new implicit session every time. There is no documented
+ * SDK option to declare a cache boundary on `AgentDefinition.prompt` itself.
+ *
+ * What we DO control, and already do correctly: each agent's persona
+ * (`config.definition.prompt`) is 100% static across every call for that
+ * agent type — Story/Art/Dev's prompt constants never change per-call, only
+ * the user message (built fresh each time with the specific brief/story/
+ * conventions) does. A byte-identical, repeated prefix is the one
+ * precondition ANY prompt cache — automatic server-side or explicit
+ * cache_control — needs to ever hit. Getting that shape right is the actual
+ * "best effort" here; whether the API exploits it underneath this SDK
+ * surface isn't something we can force from the outside.
+ *
+ * Rather than assert caching is "on" with no way to check, we log the real
+ * numbers the API reports back on every successful call. `modelUsage` (not
+ * the top-level `usage` field — that one explicitly excludes Task-subagent
+ * calls, which is what every single agent call in this project is)
+ * reports `cacheReadInputTokens`/`cacheCreationInputTokens` per model.
+ * cacheReadInputTokens > 0 on a later call is the real, verifiable signal
+ * that caching happened — not a hope stated in a comment.
+ */
+function logCacheUsage(
+  agentType: string,
+  modelUsage: Record<string, ModelUsage>,
+): void {
+  for (const [model, usage] of Object.entries(modelUsage)) {
+    if (usage.cacheReadInputTokens === 0 && usage.cacheCreationInputTokens === 0) {
+      continue;
+    }
+    console.log(
+      `[cache] ${agentType} (${model}): ${usage.cacheReadInputTokens} tokens read from cache, ` +
+        `${usage.cacheCreationInputTokens} tokens newly written to cache`,
+    );
+  }
 }
 
 function classifyResultError(message: {
