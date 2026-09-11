@@ -6,10 +6,18 @@ A Clean Architecture multi-agent pipeline that turns a one-line brief
 stats, and sprite assets — for [Aetherbound Online](#), a Ragnarok-style
 pixel-art MMORPG.
 
-Built on the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
-with the same Clean Architecture / DDD discipline the game's own backend
-uses: `domain` → `application` → `infrastructure` → `presentation`, ports
-and use-cases, zero framework leakage into business logic.
+A hybrid, cost-aware setup: **Story and Dev** call
+[OpenRouter](https://openrouter.ai/) directly (plain, provider-agnostic chat
+completions — pick any model per agent, including free/cheap ones), while
+**Art** stays on the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
+the only one of the three that genuinely needs its tool-execution loop
+(Bash/Read/Glob/Write, for finding and reusing existing sprites). See
+"Why OpenRouter for Story/Dev, not OpenCode" in
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how that split was
+decided. Same Clean Architecture / DDD discipline the game's own backend
+uses throughout: `domain` → `application` → `infrastructure` →
+`presentation`, ports and use-cases, zero framework leakage into business
+logic.
 
 ## Why this exists
 
@@ -28,9 +36,9 @@ non-issue as fifteen lines of TypeScript.
 | Agent | Runs as | Produces | Depends on |
 |---|---|---|---|
 | **Master** | plain TypeScript (`OrchestrateContentGenerationUseCase`) | the final `ContentPackage` | Story, Art, Dev's outputs |
-| **Story** | Claude Agent SDK call | `StoryManifest` (lore, NPC roster, quests, portals/fields, instances) | the brief only |
+| **Story** | OpenRouter chat completion | `StoryManifest` (lore, NPC roster, quests, portals/fields, instances) | the brief + retrieved World Registry context |
 | **Art** | Claude Agent SDK call, tool-enabled | `AssetManifest` (sprite files + provenance) | `StoryManifest` |
-| **Dev** | Claude Agent SDK call | `DevContent` (map sizes, spawn positions, quest counters, monster stats + drops) | `StoryManifest` + the target repo's own `CLAUDE.md`/`AGENTS.md` |
+| **Dev** | OpenRouter chat completion | `DevContent` (map sizes, spawn positions, quest counters, monster stats + drops) | `StoryManifest` + the target repo's own `CLAUDE.md`/`AGENTS.md` |
 
 Story runs first and alone, because Art and Dev both *depend* on the
 narrative as an input (Art needs atmosphere/theme, Dev needs which NPC
@@ -83,7 +91,11 @@ own.
 
 ```bash
 npm install
-cp .env.example .env   # set ANTHROPIC_API_KEY
+cp .env.example .env
+# set ANTHROPIC_API_KEY (Art), OPENROUTER_API_KEY (Story/Dev), and
+# OPENROUTER_STORY_MODEL / OPENROUTER_DEV_MODEL — pick current model ids
+# from https://openrouter.ai/models (no defaults are hardcoded; that
+# catalog, especially the free tier, changes often)
 
 npm run generate -- --brief "a coastal pirate town, level 15-20" \
   --backend-path ../mmorpg-backend \
@@ -131,8 +143,8 @@ src/
 ├── application/        # ports (interfaces) + use-cases, depends only on domain/
 │   ├── ports/
 │   └── use-cases/        orchestrate-content-generation is the Master's logic
-├── infrastructure/     # concrete adapters — the only layer that imports the Agent SDK / fs
-│   ├── agents/            ClaudeStoryAgent, ClaudeArtAgent, ClaudeDevAgent
+├── infrastructure/     # concrete adapters — the only layer that imports the Agent SDK / openai / fs
+│   ├── agents/            OpenRouterStoryAgent, ClaudeArtAgent, OpenRouterDevAgent
 │   └── persistence/       FilesystemTargetRepoConventions, FileManifestWriter
 └── presentation/
     └── cli/               generate-package.cli.ts — the one place everything gets wired together
@@ -148,18 +160,24 @@ Full breakdown and the sequence diagram: [`docs/ARCHITECTURE.md`](./docs/ARCHITE
   only fall back to writing a ready-to-paste generation prompt
   (`AssetEntry.source === 'generated'`) when nothing fits. Turning that
   prompt into a pixel-art file is still a manual step today.
-- **Not yet run end-to-end against a live `ANTHROPIC_API_KEY`.** The
-  pipeline typechecks cleanly and the schema-generation step
-  (`npm run build:schema`) has been verified to run and produce valid JSON
-  Schema; the three agent calls themselves are implemented directly
-  against the SDK's documented `query()`/`outputFormat` API but haven't
-  had a real run logged here yet.
-- Tests cover the deterministic parts only (`node --test`, no mocking
-  framework — see `src/domain/entities/content-package.entity.test.ts` and
-  `src/application/use-cases/orchestrate-content-generation.use-case.test.ts`,
-  the latter using plain in-memory fakes for every port). The three actual
-  Claude Agent SDK calls aren't covered by an automated test yet, since
-  that requires a real `ANTHROPIC_API_KEY` and network access.
+- **Not yet run end-to-end against live API keys.** The pipeline typechecks
+  cleanly and the schema-generation step (`npm run build:schema`) has been
+  verified to run and produce valid JSON Schema; the three agent calls
+  themselves are implemented directly against each provider's documented
+  API but haven't had a real run logged here yet — needs both
+  `OPENROUTER_API_KEY` (Story/Dev) and `ANTHROPIC_API_KEY` (Art), and costs
+  real money on both.
+- **JSON Schema conformance from OpenRouter isn't guaranteed provider-to-
+  provider** (OpenRouter's own docs say so) — the Story/Dev path re-validates
+  every response with zod regardless (see `run-structured-openrouter-agent.ts`),
+  the same defense-in-depth the Claude SDK path already had.
+- Tests cover the deterministic parts and the retry/self-correction logic
+  (`node --test`, no mocking framework). `run-structured-openrouter-agent.ts`
+  (Story/Dev) has real unit coverage against a fake `ChatCompletionClient` —
+  success, transient-error retry, refusal, and self-correction paths are all
+  exercised without hitting the network. The Claude Agent SDK path (Art)
+  still isn't covered by an automated test, since its `query()` call isn't
+  easily fakeable the same way.
 
 ## Status
 

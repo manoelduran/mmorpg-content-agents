@@ -6,8 +6,8 @@ import {
   DevContentSchema,
   type DevContent,
 } from "../../domain/value-objects/dev-content.value-object";
-import { runStructuredAgent } from "./run-structured-agent";
-import type { IApprovalGate } from "../../application/ports/approval-gate.port";
+import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
+import type { ChatCompletionClient } from "./openrouter-client";
 import { untrustedBlock } from "./prompt-safety";
 
 const DEV_AGENT_PROMPT = `You are the Fullstack Dev agent for Aetherbound Online.
@@ -51,15 +51,22 @@ Scale every monster's stats and every quest's rewards to the story's
 levelRange — an instance boss should be noticeably stronger than a field
 monster in the same city. Every npcId/questId/fieldId/portalId/monsterId
 you reference must come from the story manifest exactly as given — never
-invent a new one here.`;
+invent a new one here.
 
-// `conventions.backendRules` etc. come from reading real files off disk
-// (FilesystemTargetRepoConventions) — content we don't control and didn't
-// author ourselves, wrapped via untrustedBlock() (see prompt-safety.ts)
-// so it can never be read as an instruction with the same authority as
-// DEV_AGENT_PROMPT above.
-export class ClaudeDevAgent implements IDevAgent {
-  constructor(private readonly approvalGate: IApprovalGate) {}
+Respond with a single JSON object matching the given schema exactly — no
+prose, no markdown fences, no commentary outside the JSON.`;
+
+/**
+ * OpenRouter counterpart to the retired ClaudeDevAgent. Dev has zero tools
+ * and produces pure text-in-JSON-out — same reasoning as
+ * openrouter-story-agent.ts for why this is a clean fit for a plain
+ * chat-completion call instead of the Claude Agent SDK.
+ */
+export class OpenRouterDevAgent implements IDevAgent {
+  constructor(
+    private readonly client: ChatCompletionClient,
+    private readonly model: string,
+  ) {}
 
   async generate(
     story: StoryManifest,
@@ -80,21 +87,17 @@ export class ClaudeDevAgent implements IDevAgent {
 --- STORY MANIFEST (trusted — produced by our own Story agent) ---
 ${JSON.stringify(story, null, 2)}`;
 
-    // Dev has tools: [] — like Story, approvalGate is wired for
-    // consistency but never actually triggers for this agent.
-    return runStructuredAgent<DevContent>(prompt, {
+    return runStructuredOpenRouterAgent<DevContent>(prompt, {
       agentType: "dev",
-      definition: {
-        description: "Produces structural game-content data from a story manifest",
-        prompt: DEV_AGENT_PROMPT,
-        tools: [],
-      },
+      systemPrompt: DEV_AGENT_PROMPT,
+      model: this.model,
+      schemaName: "dev_content",
       outputSchema: z.toJSONSchema(DevContentSchema) as Record<
         string,
         unknown
       >,
       zodSchema: DevContentSchema,
-      approvalGate: this.approvalGate,
+      client: this.client,
     });
   }
 }

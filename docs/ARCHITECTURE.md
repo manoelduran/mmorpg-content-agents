@@ -4,7 +4,7 @@
 
 The obvious design is "four agents, Master included, all talking to each
 other." This repo deliberately does something narrower: **Story, Art, and
-Dev are Claude Agent SDK agents; Master is plain, deterministic
+Dev are the LLM-calling agents; Master is plain, deterministic
 TypeScript** (`OrchestrateContentGenerationUseCase`).
 
 The reasoning: orchestration here is a fixed, known sequence — run Story,
@@ -24,9 +24,54 @@ a validation pass. Making Master ordinary code means:
 This is the same instinct DDD applies to any workflow: put business rules
 in code you can read and test, keep the non-deterministic part (creative
 generation) isolated behind a narrow interface. Story/Art/Dev are that
-non-deterministic part — each is a `query()` call to the Claude Agent SDK
-with `outputFormat: {type: 'json_schema', ...}`, so even the "AI part" is
-schema-constrained at the boundary.
+non-deterministic part — each is a single schema-constrained LLM call
+(Story/Dev via OpenRouter's `response_format: {type:'json_schema', ...}`,
+Art via the Claude Agent SDK's `outputFormat` — see "Why OpenRouter for
+Story/Dev, not OpenCode" below for why they're not all on the same
+provider), so even the "AI part" is schema-constrained at the boundary.
+
+## Why OpenRouter for Story/Dev, not OpenCode
+
+v1 had all three agents on the Claude Agent SDK, paying Anthropic's list
+price for every call. Reducing that cost meant picking a way to route
+different agents to different providers/models. Two options were evaluated
+for real (not from marketing pages — from the actual installed package
+types) before choosing:
+
+- **OpenCode** (`@opencode-ai/sdk`) — inspected via `npm pack`, not just its
+  docs. It's a general-purpose *interactive coding agent* harness: it spawns
+  a child-process server, requires session lifecycle
+  (`session.create()` → `prompt()` → ...), and its own documented structured-
+  output call shape didn't match the types actually published in the
+  package at the version checked. To get the one thing we wanted from it —
+  per-call model/provider routing — we'd have taken on all of that
+  complexity, plus a real doc/type mismatch risk, just to reach a stateless
+  JSON-generation call it wasn't designed around.
+- **OpenRouter directly** — an OpenAI-compatible endpoint (`response_format:
+  {type:'json_schema', ...}`, the same JSON Schema `z.toJSONSchema()`
+  already produces for us), called with the official `openai` package
+  pointed at OpenRouter's `baseURL`. No session, no child process — the same
+  stateless request/response shape `run-structured-agent.ts` already used
+  for the Claude SDK path. **Chosen.**
+
+Along the way, a real constraint surfaced: **Art has actual tools**
+(Bash/Read/Glob/Write, to search `mmorpg-frontend` for a reusable sprite
+before asking for a new one — see `claude-art-agent.ts`). That tool-
+execution loop is something the Claude Agent SDK runs for us; OpenRouter's
+plain chat completions API has no equivalent — using it for Art would mean
+building and securing our own Bash-execution loop from scratch, a much
+larger and more security-sensitive project on its own. So the migration
+stayed intentionally hybrid: **Story and Dev (zero tools, pure text-in-
+JSON-out) moved to OpenRouter; Art stayed on the Claude Agent SDK.** This
+still cuts most of the Anthropic spend without taking on a new
+tool-execution runtime that wasn't asked for.
+
+See `openrouter-client.ts` for the `ChatCompletionClient` port this
+introduced (and why it's a port when the Claude SDK path isn't — the
+answer is testability, not dogma) and `run-structured-openrouter-agent.ts`
+for the OpenRouter-path counterpart to `run-structured-agent.ts`, reusing
+the exact same retry/self-correction/error-taxonomy machinery
+(`retry-policy.ts`, `agent-errors.ts`) unchanged.
 
 ## The pipeline
 
@@ -83,13 +128,16 @@ individual ids wrong, which is what `checkReferentialIntegrity` in
 |---|---|---|
 | `domain/` | zod schemas + inferred types (`StoryManifest`, `AssetManifest`, `DevContent`, `ContentPackage`, and the shared `city-template.value-object.ts` cardinalities they're both built from) and pure functions (`checkReferentialIntegrity`) | nothing |
 | `application/` | `ports/` (interfaces: `IStoryAgent`, `IArtAgent`, `IDevAgent`, `ITargetRepoConventions`, `IManifestWriter`) and `use-cases/` (orchestration + validation logic) | `domain/` only |
-| `infrastructure/` | Concrete adapters: `ClaudeStoryAgent`/`ClaudeArtAgent`/`ClaudeDevAgent` (Claude Agent SDK), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
+| `infrastructure/` | Concrete adapters: `OpenRouterStoryAgent`/`OpenRouterDevAgent` (OpenRouter via `openai`), `ClaudeArtAgent` (Claude Agent SDK), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
 | `presentation/` | `generate-package.cli.ts` (the only place that wires ports to adapters via manual constructor injection) | everything |
 
 Same rule as `mmorpg-backend/AGENTS.md`: the domain layer never imports a
 framework, an agent SDK, or the filesystem. `application/` only knows about
-*interfaces* — swapping `ClaudeStoryAgent` for a different model provider
-later touches one file in `infrastructure/`, nothing else.
+*interfaces* — this is why swapping `ClaudeStoryAgent`/`ClaudeDevAgent` for
+`OpenRouterStoryAgent`/`OpenRouterDevAgent` only ever touched
+`infrastructure/agents/` and the CLI's wiring, not `IStoryAgent`/`IDevAgent`
+themselves or any use-case: a real instance of the "swappable adapter"
+promise this layering makes, not just a theoretical one.
 
 ## Known limitation: the Art agent can't actually draw
 

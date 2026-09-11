@@ -10,6 +10,7 @@
   },
   "keywords": [
     "claude-agent-sdk",
+    "openrouter",
     "clean-architecture",
     "multi-agent",
     "mmorpg",
@@ -17,10 +18,11 @@
   ],
   "author": "",
   "license": "MIT",
-  "description": "Clean-architecture multi-agent content pipeline (Story, Art, Fullstack Dev, orchestrated by a Master agent) built on the Claude Agent SDK, generating structured content packages for the Aetherbound Online MMORPG.",
+  "description": "Clean-architecture multi-agent content pipeline (Story, Art, Fullstack Dev, orchestrated by a Master agent) for the Aetherbound Online MMORPG. Story and Dev call OpenRouter directly; Art stays on the Claude Agent SDK for its tool-execution loop. Generates structured content packages, not code.",
   "type": "module",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.268",
+    "openai": "^7.15.0",
     "zod": "^4.6.2"
   },
   "devDependencies": {

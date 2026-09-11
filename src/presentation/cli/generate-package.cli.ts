@@ -8,9 +8,10 @@ import { LoadTargetRepoConventionsUseCase } from "../../application/use-cases/lo
 import { AssemblePackageUseCase } from "../../application/use-cases/assemble-package.use-case";
 import { ValidatePackageUseCase } from "../../application/use-cases/validate-package.use-case";
 import { ApplyContentGuardrailsUseCase, ContentGuardrailViolationError } from "../../application/use-cases/apply-content-guardrails.use-case";
-import { ClaudeStoryAgent } from "../../infrastructure/agents/claude-story-agent";
+import { OpenRouterStoryAgent } from "../../infrastructure/agents/openrouter-story-agent";
+import { OpenRouterDevAgent } from "../../infrastructure/agents/openrouter-dev-agent";
+import { OpenRouterChatCompletionClient, type ChatCompletionClient } from "../../infrastructure/agents/openrouter-client";
 import { ClaudeArtAgent } from "../../infrastructure/agents/claude-art-agent";
-import { ClaudeDevAgent } from "../../infrastructure/agents/claude-dev-agent";
 import { FilesystemTargetRepoConventions } from "../../infrastructure/persistence/filesystem-target-repo-conventions";
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
 import { FileCheckpointStore } from "../../infrastructure/persistence/file-checkpoint-store";
@@ -28,12 +29,34 @@ import { PackageValidationError } from "../../application/use-cases/validate-pac
 
 interface CliArgs {
   brief: string;
+  storyModel: string;
+  devModel: string;
   outputRoot: string;
   backendPath: string;
   frontendPath?: string;
   autoApprove: boolean;
   runId: string;
   isResumedRun: boolean;
+}
+
+/**
+ * No default model id is hardcoded here on purpose: OpenRouter's free/cheap
+ * lineup changes often enough that a value baked into this file today could
+ * be gone or repriced by the time it's read. Failing fast with a pointer to
+ * the live catalog is more honest than shipping a model id that might not
+ * exist anymore.
+ */
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(
+      `${name} is not set. Copy .env.example to .env and set it — pick a\n` +
+        `current model id from https://openrouter.ai/models (the free/cheap\n` +
+        `lineup rotates, so no default is baked into this code).`,
+    );
+    process.exit(1);
+  }
+  return value;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -58,6 +81,8 @@ function parseArgs(argv: string[]): CliArgs {
 
   return {
     brief,
+    storyModel: requireEnv("OPENROUTER_STORY_MODEL"),
+    devModel: requireEnv("OPENROUTER_DEV_MODEL"),
     outputRoot: resolve(get("--output") ?? "output"),
     backendPath: resolve(get("--backend-path") ?? "../mmorpg-backend"),
     frontendPath: get("--frontend-path")
@@ -78,13 +103,20 @@ function parseArgs(argv: string[]): CliArgs {
 function buildOrchestrator(
   approvalGate: IApprovalGate,
   outputRoot: string,
+  openRouterClient: ChatCompletionClient,
+  storyModel: string,
+  devModel: string,
 ): OrchestrateContentGenerationUseCase {
   const worldRegistryRepository = new FileWorldRegistryRepository(outputRoot);
   return new OrchestrateContentGenerationUseCase(
-    new GenerateStoryUseCase(new ClaudeStoryAgent(approvalGate)),
+    new GenerateStoryUseCase(new OpenRouterStoryAgent(openRouterClient, storyModel)),
     new LoadTargetRepoConventionsUseCase(new FilesystemTargetRepoConventions()),
+    // Art still calls the Claude Agent SDK — it's the only one of the three
+    // that genuinely needs the SDK's tool-execution loop (Bash/Read/Glob/
+    // Write, see claude-art-agent.ts), which OpenRouter's plain chat
+    // completions API has no equivalent for. See docs/ARCHITECTURE.md.
     new GenerateAssetsUseCase(new ClaudeArtAgent(approvalGate)),
-    new GenerateDevContentUseCase(new ClaudeDevAgent(approvalGate)),
+    new GenerateDevContentUseCase(new OpenRouterDevAgent(openRouterClient, devModel)),
     new AssemblePackageUseCase(),
     new ValidatePackageUseCase(),
     new FileManifestWriter(),
@@ -100,7 +132,14 @@ async function main() {
   const approvalGate: IApprovalGate = args.autoApprove
     ? new AutoApproveGate()
     : new CliApprovalGate();
-  const orchestrator = buildOrchestrator(approvalGate, args.outputRoot);
+  const openRouterClient = new OpenRouterChatCompletionClient();
+  const orchestrator = buildOrchestrator(
+    approvalGate,
+    args.outputRoot,
+    openRouterClient,
+    args.storyModel,
+    args.devModel,
+  );
 
   if (args.autoApprove) {
     console.log("[--yes] Running unattended — every tool call is auto-approved and logged.");

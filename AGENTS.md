@@ -10,8 +10,9 @@
 
 ## Agents
 
-- Story, Art, and Dev are the only three things allowed to call the Claude Agent SDK. Master (`OrchestrateContentGenerationUseCase`) is plain TypeScript — see `docs/ARCHITECTURE.md` for why. Don't "upgrade" Master into a fourth agent call without updating that doc's reasoning first.
-- Every agent call MUST use `outputFormat: {type: 'json_schema', ...}` against a schema derived from `z.toJSONSchema(...)` of the corresponding domain value-object — never parse free text out of an agent's prose response.
+- Story, Art, and Dev are the only three things allowed to call an LLM provider. Master (`OrchestrateContentGenerationUseCase`) is plain TypeScript — see `docs/ARCHITECTURE.md` for why. Don't "upgrade" Master into a fourth agent call without updating that doc's reasoning first.
+- Art calls the Claude Agent SDK — it's the only agent with real tools (Bash/Read/Glob/Write, to search/copy existing sprites), which needs the SDK's tool-execution loop. Story and Dev call OpenRouter directly (`run-structured-openrouter-agent.ts`) — they're pure text-in-JSON-out with zero tools, so a plain chat completion is the honest-sized tool for the job. Don't move Art to OpenRouter without also building (and reviewing the security of) a real tool-execution loop first — see `docs/ARCHITECTURE.md`'s "Why OpenRouter for Story/Dev, not OpenCode" section for the reasoning already done here.
+- Every agent call MUST constrain output to a JSON Schema derived from `z.toJSONSchema(...)` of the corresponding domain value-object (`outputFormat` for the Claude SDK, `response_format` for OpenRouter) — never parse free text out of an agent's prose response.
 - Every use-case that receives an agent's output MUST re-validate it with the zod schema before doing anything else with it (`Schema.parse(raw)`), even though the SDK already constrained the shape. Don't trust the infrastructure layer wired it up correctly — verify at the boundary.
 
 ## City template
@@ -29,5 +30,6 @@
 
 ## Tests
 
-- Every use-case in `application/use-cases/` should be testable by passing in-memory fakes for its port dependencies — no real Anthropic API call required to test `ValidatePackageUseCase` or `AssemblePackageUseCase`.
+- Every use-case in `application/use-cases/` should be testable by passing in-memory fakes for its port dependencies — no real API call to any provider required to test `ValidatePackageUseCase` or `AssemblePackageUseCase`.
+- `run-structured-openrouter-agent.ts` (Story/Dev) is tested against a fake `ChatCompletionClient` (see its `.test.ts`) — a real advantage over the Claude SDK path, whose `query()` isn't easily fakeable. Prefer this pattern for any future OpenRouter-path code.
 - Domain logic (`checkReferentialIntegrity`) MUST be tested with plain objects, no mocks needed at all.
