@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { OrchestrateContentGenerationUseCase } from "../../application/use-cases/orchestrate-content-generation.use-case";
 import { GenerateStoryUseCase } from "../../application/use-cases/generate-story.use-case";
 import { GenerateAssetsUseCase } from "../../application/use-cases/generate-assets.use-case";
@@ -11,6 +12,7 @@ import { ClaudeArtAgent } from "../../infrastructure/agents/claude-art-agent";
 import { ClaudeDevAgent } from "../../infrastructure/agents/claude-dev-agent";
 import { FilesystemTargetRepoConventions } from "../../infrastructure/persistence/filesystem-target-repo-conventions";
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
+import { FileCheckpointStore } from "../../infrastructure/persistence/file-checkpoint-store";
 import { CliApprovalGate } from "../../infrastructure/security/cli-approval-gate";
 import { AutoApproveGate } from "../../infrastructure/security/auto-approve-gate";
 import type { IApprovalGate } from "../../application/ports/approval-gate.port";
@@ -27,6 +29,8 @@ interface CliArgs {
   backendPath: string;
   frontendPath?: string;
   autoApprove: boolean;
+  runId: string;
+  isResumedRun: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -38,10 +42,16 @@ function parseArgs(argv: string[]): CliArgs {
   const brief = get("--brief");
   if (!brief) {
     console.error(
-      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes]',
+      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes] [--run-id <id>]',
     );
     process.exit(1);
   }
+
+  // --run-id is the idempotency key (see checkpoint-store.port.ts): pass
+  // one back in to resume a failed run instead of redoing finished
+  // phases. Left unset, we mint a fresh one and print it, since there's
+  // nothing to resume on a brand-new run.
+  const explicitRunId = get("--run-id");
 
   return {
     brief,
@@ -54,6 +64,8 @@ function parseArgs(argv: string[]): CliArgs {
     // unless they explicitly opt out with --yes (for CI/unattended runs).
     // See cli-approval-gate.ts / auto-approve-gate.ts.
     autoApprove: argv.includes("--yes") || argv.includes("--auto-approve"),
+    runId: explicitRunId ?? randomUUID(),
+    isResumedRun: explicitRunId !== undefined,
   };
 }
 
@@ -62,6 +74,7 @@ function parseArgs(argv: string[]): CliArgs {
 // This is the only place every port gets wired to its concrete adapter.
 function buildOrchestrator(
   approvalGate: IApprovalGate,
+  outputRoot: string,
 ): OrchestrateContentGenerationUseCase {
   return new OrchestrateContentGenerationUseCase(
     new GenerateStoryUseCase(new ClaudeStoryAgent(approvalGate)),
@@ -71,6 +84,7 @@ function buildOrchestrator(
     new AssemblePackageUseCase(),
     new ValidatePackageUseCase(),
     new FileManifestWriter(),
+    new FileCheckpointStore(outputRoot),
   );
 }
 
@@ -79,10 +93,15 @@ async function main() {
   const approvalGate: IApprovalGate = args.autoApprove
     ? new AutoApproveGate()
     : new CliApprovalGate();
-  const orchestrator = buildOrchestrator(approvalGate);
+  const orchestrator = buildOrchestrator(approvalGate, args.outputRoot);
 
   if (args.autoApprove) {
     console.log("[--yes] Running unattended — every tool call is auto-approved and logged.");
+  }
+  if (args.isResumedRun) {
+    console.log(`Resuming run ${args.runId} — already-completed phases won't be redone.`);
+  } else {
+    console.log(`Run id: ${args.runId} (pass --run-id ${args.runId} to resume this run if it fails)`);
   }
   console.log(`Generating content package for brief: "${args.brief}"`);
   const { package: pkg, manifestPath } = await orchestrator.execute({
@@ -90,6 +109,7 @@ async function main() {
     outputRoot: args.outputRoot,
     backendPath: args.backendPath,
     frontendPath: args.frontendPath,
+    runId: args.runId,
   });
 
   const fieldMonsterCount = pkg.story.fields.reduce((n, f) => n + f.monsters.length, 0);
