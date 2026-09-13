@@ -15,7 +15,7 @@ import {
   AgentRefusalError,
   StructuredOutputValidationError,
 } from "../../domain/errors/agent-errors";
-import type { ChatCompletionClient } from "./openrouter-client";
+import type { ChatCompletionClient, UserContent } from "./openrouter-client";
 
 export interface OpenRouterAgentConfig<T> {
   agentType: string;
@@ -41,7 +41,16 @@ export interface OpenRouterAgentConfig<T> {
 }
 
 interface AttemptInput {
-  userPrompt: string;
+  userPrompt: UserContent;
+}
+
+/** String in, string out (unchanged behavior for Story/Dev's plain-text
+ * calls); for Art's multimodal array, the correction note is appended as
+ * one more text part rather than concatenated into existing text — you
+ * can't string-concat onto an array. */
+function appendFeedback(userPrompt: UserContent, feedback: string): UserContent {
+  if (typeof userPrompt === "string") return userPrompt + feedback;
+  return [...userPrompt, { type: "text", text: feedback }];
 }
 
 /**
@@ -54,7 +63,7 @@ interface AttemptInput {
  * reasoning behind this split.
  */
 export async function runStructuredOpenRouterAgent<T>(
-  userPrompt: string,
+  userPrompt: UserContent,
   config: OpenRouterAgentConfig<T>,
 ): Promise<T> {
   return withRetry<AttemptInput, T>(
@@ -66,7 +75,7 @@ export async function runStructuredOpenRouterAgent<T>(
 }
 
 async function runOnce<T>(
-  userPrompt: string,
+  userPrompt: UserContent,
   config: OpenRouterAgentConfig<T>,
 ): Promise<T> {
   let result;
@@ -185,7 +194,7 @@ function classify(
     ].join("\n");
     return {
       retryable: true,
-      nextInput: { userPrompt: attemptInput.userPrompt + feedback },
+      nextInput: { userPrompt: appendFeedback(attemptInput.userPrompt, feedback) },
     };
   }
 

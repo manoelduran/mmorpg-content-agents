@@ -17,8 +17,8 @@
  *     resending the same prompt often reproduces the same mistake. The
  *     better move is to show the model exactly what was wrong and ask it
  *     to fix that specific thing (a "self-correction" loop) — see
- *     StructuredOutputValidationError and how run-structured-agent.ts
- *     uses it.
+ *     StructuredOutputValidationError and how
+ *     run-structured-openrouter-agent.ts uses it.
  *
  * Modeling these as distinct error CLASSES (instead of one generic Error)
  * lets calling code make that decision with a simple `instanceof` check —

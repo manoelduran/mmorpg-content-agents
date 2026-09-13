@@ -13,7 +13,7 @@ that benefits from an LLM deciding it fresh each time, and every LLM call
 is a chance to skip a step, hallucinate a different order, or silently drop
 a validation pass. Making Master ordinary code means:
 
-- It's unit-testable without an `ANTHROPIC_API_KEY`.
+- It's unit-testable without an `OPENROUTER_API_KEY`.
 - The sequence (Story → {Art, Dev} in parallel → merge → validate) is
   provably always followed, not "usually followed by a well-prompted
   model."
@@ -24,13 +24,12 @@ a validation pass. Making Master ordinary code means:
 This is the same instinct DDD applies to any workflow: put business rules
 in code you can read and test, keep the non-deterministic part (creative
 generation) isolated behind a narrow interface. Story/Art/Dev are that
-non-deterministic part — each is a single schema-constrained LLM call
-(Story/Dev via OpenRouter's `response_format: {type:'json_schema', ...}`,
-Art via the Claude Agent SDK's `outputFormat` — see "Why OpenRouter for
-Story/Dev, not OpenCode" below for why they're not all on the same
-provider), so even the "AI part" is schema-constrained at the boundary.
+non-deterministic part — each is a single schema-constrained LLM call via
+OpenRouter's `response_format: {type:'json_schema', ...}` (the same JSON
+Schema `z.toJSONSchema()` already produces for us), so even the "AI part"
+is schema-constrained at the boundary.
 
-## Why OpenRouter for Story/Dev, not OpenCode
+## Why OpenRouter for all three agents, not OpenCode or the Claude Agent SDK
 
 v1 had all three agents on the Claude Agent SDK, paying Anthropic's list
 price for every call. Reducing that cost meant picking a way to route
@@ -47,31 +46,46 @@ types) before choosing:
   per-call model/provider routing — we'd have taken on all of that
   complexity, plus a real doc/type mismatch risk, just to reach a stateless
   JSON-generation call it wasn't designed around.
-- **OpenRouter directly** — an OpenAI-compatible endpoint (`response_format:
-  {type:'json_schema', ...}`, the same JSON Schema `z.toJSONSchema()`
-  already produces for us), called with the official `openai` package
-  pointed at OpenRouter's `baseURL`. No session, no child process — the same
-  stateless request/response shape `run-structured-agent.ts` already used
-  for the Claude SDK path. **Chosen.**
+- **OpenRouter directly** — an OpenAI-compatible endpoint, called with the
+  official `openai` package pointed at OpenRouter's `baseURL`. No session,
+  no child process — a stateless request/response shape. **Chosen.**
 
-Along the way, a real constraint surfaced: **Art has actual tools**
+Along the way, a real constraint surfaced: **Art had actual tools**
 (Bash/Read/Glob/Write, to search `mmorpg-frontend` for a reusable sprite
-before asking for a new one — see `claude-art-agent.ts`). That tool-
-execution loop is something the Claude Agent SDK runs for us; OpenRouter's
-plain chat completions API has no equivalent — using it for Art would mean
-building and securing our own Bash-execution loop from scratch, a much
-larger and more security-sensitive project on its own. So the migration
-stayed intentionally hybrid: **Story and Dev (zero tools, pure text-in-
-JSON-out) moved to OpenRouter; Art stayed on the Claude Agent SDK.** This
-still cuts most of the Anthropic spend without taking on a new
-tool-execution runtime that wasn't asked for.
+before asking for a new one). That tool-execution loop was something the
+Claude Agent SDK ran for us; OpenRouter's plain chat completions API has no
+equivalent. The migration therefore stayed intentionally hybrid at first:
+Story and Dev (zero tools, pure text-in-JSON-out) moved to OpenRouter; Art
+stayed on the Claude Agent SDK.
+
+That split later got revisited, and the tool-execution loop turned out to
+be solving the wrong layer of the problem. "Search mmorpg-frontend for a
+matching sprite" isn't actually a task that benefits from an agent
+*deciding* how to search — it's a fixed operation (list a directory,
+thumbnail some candidates) that Master-style deterministic code can just
+do, the same reasoning this doc already applies to orchestration itself.
+`OpenRouterArtAgent` does exactly that: it lists `mmorpg-frontend`'s sprite
+files and thumbnails candidates in plain TypeScript, then hands the model
+only the genuinely creative decision — look at a few candidate images plus
+the entity's narrative, decide reuse-vs-generate. That's a single
+vision-capable chat-completion call, the same shape as Story/Dev, no tool
+loop needed. See `openrouter-art-agent.ts`.
+
+One real constraint this introduced: as of this writing, no free model on
+OpenRouter can *generate* an image as output (checked
+`https://openrouter.ai/models?output_modalities=image` directly — every
+image-output model listed is paid). `OpenRouterArtAgent` was designed
+around that fact rather than against it: it never asks a model to produce
+an image, only to reason over ones it's shown. When nothing existing fits,
+the output is still a ready-to-paste generation prompt for a human (or a
+future pluggable image-gen step) — same contract `ClaudeArtAgent` always
+had, see "Known limitation" below.
 
 See `openrouter-client.ts` for the `ChatCompletionClient` port this
-introduced (and why it's a port when the Claude SDK path isn't — the
-answer is testability, not dogma) and `run-structured-openrouter-agent.ts`
-for the OpenRouter-path counterpart to `run-structured-agent.ts`, reusing
-the exact same retry/self-correction/error-taxonomy machinery
-(`retry-policy.ts`, `agent-errors.ts`) unchanged.
+introduced (and why it's a port when a raw SDK call isn't — the answer is
+testability, not dogma) and `run-structured-openrouter-agent.ts`, the
+shared runner all three agents call, for the retry/self-correction/error-
+taxonomy machinery (`retry-policy.ts`, `agent-errors.ts`).
 
 ## The pipeline
 
@@ -128,7 +142,7 @@ individual ids wrong, which is what `checkReferentialIntegrity` in
 |---|---|---|
 | `domain/` | zod schemas + inferred types (`StoryManifest`, `AssetManifest`, `DevContent`, `ContentPackage`, and the shared `city-template.value-object.ts` cardinalities they're both built from) and pure functions (`checkReferentialIntegrity`) | nothing |
 | `application/` | `ports/` (interfaces: `IStoryAgent`, `IArtAgent`, `IDevAgent`, `ITargetRepoConventions`, `IManifestWriter`) and `use-cases/` (orchestration + validation logic) | `domain/` only |
-| `infrastructure/` | Concrete adapters: `OpenRouterStoryAgent`/`OpenRouterDevAgent` (OpenRouter via `openai`), `ClaudeArtAgent` (Claude Agent SDK), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
+| `infrastructure/` | Concrete adapters: `OpenRouterStoryAgent`/`OpenRouterDevAgent`/`OpenRouterArtAgent` (all OpenRouter via `openai`), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
 | `presentation/` | `generate-package.cli.ts` (the only place that wires ports to adapters via manual constructor injection) | everything |
 
 Same rule as `mmorpg-backend/AGENTS.md`: the domain layer never imports a
@@ -162,9 +176,8 @@ a from-scratch city.
 
 Enforcing the pins reuses the retry loop that already exists for schema
 failures, instead of adding a second mechanism: `run-structured-openrouter-agent.ts`
-(and, for symmetry, `run-structured-agent.ts`) gained a generic
-`extraValidation?: (data: T) => string[]` hook, checked right after the
-zod schema succeeds. `OpenRouterStoryAgent`/`OpenRouterDevAgent` supply
+gained a generic `extraValidation?: (data: T) => string[]` hook, checked
+right after the zod schema succeeds. `OpenRouterStoryAgent`/`OpenRouterDevAgent` supply
 `checkExistingNpcsPreserved`/`checkExistingMapAndPlacementsPreserved` as
 that hook when an `existingCity` is given — any violation becomes exactly
 the same `StructuredOutputValidationError` a zod failure would, which the
@@ -174,15 +187,16 @@ as corrective feedback. The generic infra never needs to know what
 
 ## Known limitation: the Art agent can't actually draw
 
-Claude doesn't generate raster images. `ClaudeArtAgent`'s real job is
-search-first: look for a matching sprite already committed to
-`mmorpg-frontend` or already present in the local "Pixel Art Top Down -
-Basic" asset pack, and only fall back to `source: 'generated'` with a
-ready-to-paste generation prompt when nothing fits — mirroring the manual
-ChatGPT-browser-automation workflow this project used before agents
-existed. Turning that prompt into a real file is still a manual (or
-pluggable, future) step; see `AssetEntry.source` in
-`src/domain/value-objects/asset-manifest.value-object.ts`.
+No free OpenRouter model can generate an image as output (see above), and
+even paid ones are a separate concern from this pipeline's job.
+`OpenRouterArtAgent`'s real job is search-first: list what's already
+committed to `mmorpg-frontend`, show the model a handful of candidates
+alongside the entity's narrative, and only fall back to `source:
+'generated'` with a ready-to-paste generation prompt when nothing shown
+fits well enough — mirroring the manual ChatGPT-browser-automation
+workflow this project used before agents existed. Turning that prompt into
+a real file is still a manual (or pluggable, future) step; see
+`AssetEntry.source` in `src/domain/value-objects/asset-manifest.value-object.ts`.
 
 ## Out of scope for v1
 

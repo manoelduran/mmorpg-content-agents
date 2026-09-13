@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { OrchestrateContentGenerationUseCase } from "../../application/use-cases/orchestrate-content-generation.use-case";
 import { GenerateStoryUseCase } from "../../application/use-cases/generate-story.use-case";
@@ -11,7 +11,7 @@ import { ApplyContentGuardrailsUseCase, ContentGuardrailViolationError } from ".
 import { OpenRouterStoryAgent } from "../../infrastructure/agents/openrouter-story-agent";
 import { OpenRouterDevAgent } from "../../infrastructure/agents/openrouter-dev-agent";
 import { OpenRouterChatCompletionClient, type ChatCompletionClient } from "../../infrastructure/agents/openrouter-client";
-import { ClaudeArtAgent } from "../../infrastructure/agents/claude-art-agent";
+import { OpenRouterArtAgent } from "../../infrastructure/agents/openrouter-art-agent";
 import { FilesystemTargetRepoConventions } from "../../infrastructure/persistence/filesystem-target-repo-conventions";
 import { FileManifestWriter } from "../../infrastructure/persistence/file-manifest-writer";
 import { FileCheckpointStore } from "../../infrastructure/persistence/file-checkpoint-store";
@@ -19,9 +19,6 @@ import { FileWorldRegistryRepository } from "../../infrastructure/persistence/fi
 import { FilesystemExistingCityContextProvider } from "../../infrastructure/persistence/filesystem-existing-city-context-provider";
 import { LoadExistingCityContextUseCase } from "../../application/use-cases/load-existing-city-context.use-case";
 import { RetrieveWorldContextUseCase } from "../../application/use-cases/retrieve-world-context.use-case";
-import { CliApprovalGate } from "../../infrastructure/security/cli-approval-gate";
-import { AutoApproveGate } from "../../infrastructure/security/auto-approve-gate";
-import type { IApprovalGate } from "../../application/ports/approval-gate.port";
 import {
   AgentRefusalError,
   TransientAgentError,
@@ -33,11 +30,10 @@ interface CliArgs {
   brief: string;
   storyModel: string;
   devModel: string;
-  artMaxBudgetUsd: number;
+  artModel: string;
   outputRoot: string;
   backendPath: string;
-  frontendPath?: string;
-  autoApprove: boolean;
+  frontendPath: string;
   runId: string;
   isResumedRun: boolean;
   existingCityContextPath?: string;
@@ -63,23 +59,6 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/**
- * Art is the only agent still calling a paid provider (the Claude Agent
- * SDK, for its Bash/Read/Glob/Write tool loop) — this caps what a single
- * `npm run generate` run can spend there, enforced by the SDK itself (see
- * run-structured-agent.ts's maxBudgetUsd). A default IS safe to hardcode
- * here (unlike the OpenRouter model ids above) since a USD figure doesn't
- * go stale the way a model catalog does. Override with
- * ART_AGENT_MAX_BUDGET_USD if $5 isn't the right number for you.
- *
- * This is a defense-in-depth precaution, not the primary safeguard — the
- * real, account-level backstop is the spend limit set on the API key /
- * organization in the Anthropic Console, which holds even if this code has
- * a bug. Set both, the same way the OpenRouter key got its own $5 credit
- * limit when it was created.
- */
-const DEFAULT_ART_MAX_BUDGET_USD = 5;
-
 function parseArgs(argv: string[]): CliArgs {
   const get = (flag: string): string | undefined => {
     const i = argv.indexOf(flag);
@@ -104,18 +83,12 @@ function parseArgs(argv: string[]): CliArgs {
     brief,
     storyModel: requireEnv("OPENROUTER_STORY_MODEL"),
     devModel: requireEnv("OPENROUTER_DEV_MODEL"),
-    artMaxBudgetUsd: process.env.ART_AGENT_MAX_BUDGET_USD
-      ? Number(process.env.ART_AGENT_MAX_BUDGET_USD)
-      : DEFAULT_ART_MAX_BUDGET_USD,
+    artModel: requireEnv("OPENROUTER_ART_MODEL"),
     outputRoot: resolve(get("--output") ?? "output"),
     backendPath: resolve(get("--backend-path") ?? "../mmorpg-backend"),
     frontendPath: get("--frontend-path")
       ? resolve(get("--frontend-path")!)
       : resolve("../mmorpg-frontend"),
-    // Secure by default: a human approves every side-effecting tool call
-    // unless they explicitly opt out with --yes (for CI/unattended runs).
-    // See cli-approval-gate.ts / auto-approve-gate.ts.
-    autoApprove: argv.includes("--yes") || argv.includes("--auto-approve"),
     runId: explicitRunId ?? randomUUID(),
     isResumedRun: explicitRunId !== undefined,
     // A city that already partially exists — see
@@ -132,22 +105,26 @@ function parseArgs(argv: string[]): CliArgs {
 // "explicit code over abstractions without purpose" rule (see AGENTS.md).
 // This is the only place every port gets wired to its concrete adapter.
 function buildOrchestrator(
-  approvalGate: IApprovalGate,
   outputRoot: string,
+  frontendPath: string,
   openRouterClient: ChatCompletionClient,
   storyModel: string,
   devModel: string,
-  artMaxBudgetUsd: number,
+  artModel: string,
 ): OrchestrateContentGenerationUseCase {
   const worldRegistryRepository = new FileWorldRegistryRepository(outputRoot);
   return new OrchestrateContentGenerationUseCase(
     new GenerateStoryUseCase(new OpenRouterStoryAgent(openRouterClient, storyModel)),
     new LoadTargetRepoConventionsUseCase(new FilesystemTargetRepoConventions()),
-    // Art still calls the Claude Agent SDK — it's the only one of the three
-    // that genuinely needs the SDK's tool-execution loop (Bash/Read/Glob/
-    // Write, see claude-art-agent.ts), which OpenRouter's plain chat
-    // completions API has no equivalent for. See docs/ARCHITECTURE.md.
-    new GenerateAssetsUseCase(new ClaudeArtAgent(approvalGate, artMaxBudgetUsd)),
+    // Art now calls OpenRouter too, same as Story/Dev — the file-system
+    // search that used to require the Claude Agent SDK's tool-execution
+    // loop moved into this agent's own deterministic code (listing
+    // mmorpg-frontend's sprites, copying the winner); the model's job
+    // shrank to the genuinely creative part: looking at a few candidate
+    // images and deciding reuse-vs-generate. See docs/ARCHITECTURE.md.
+    new GenerateAssetsUseCase(
+      new OpenRouterArtAgent(openRouterClient, artModel, join(frontendPath, "public/images")),
+    ),
     new GenerateDevContentUseCase(new OpenRouterDevAgent(openRouterClient, devModel)),
     new AssemblePackageUseCase(),
     new ValidatePackageUseCase(),
@@ -162,27 +139,16 @@ function buildOrchestrator(
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const approvalGate: IApprovalGate = args.autoApprove
-    ? new AutoApproveGate()
-    : new CliApprovalGate();
   const openRouterClient = new OpenRouterChatCompletionClient();
   const orchestrator = buildOrchestrator(
-    approvalGate,
     args.outputRoot,
+    args.frontendPath,
     openRouterClient,
     args.storyModel,
     args.devModel,
-    args.artMaxBudgetUsd,
+    args.artModel,
   );
 
-  console.log(
-    `Art (Claude Agent SDK) is capped at $${args.artMaxBudgetUsd} for this run ` +
-      `(override with ART_AGENT_MAX_BUDGET_USD) — set a matching spend limit on your ` +
-      `Anthropic API key/org too, that's the backstop this code can't replace.`,
-  );
-  if (args.autoApprove) {
-    console.log("[--yes] Running unattended — every tool call is auto-approved and logged.");
-  }
   if (args.isResumedRun) {
     console.log(`Resuming run ${args.runId} — already-completed phases won't be redone.`);
   } else {
@@ -224,6 +190,13 @@ main().catch((err) => {
     console.error(
       `Agent call failed after retrying (transient — safe to try again): ${err.message}`,
     );
+    // The generic catch-all in run-structured-agent.ts/run-structured-
+    // openrouter-agent.ts wraps an unrecognized exception with a short
+    // fixed message and keeps the real error as .cause — without printing
+    // it, every unclassified failure looks identical and undebuggable.
+    if (err.cause) {
+      console.error(`  cause: ${err.cause instanceof Error ? err.cause.message : err.cause}`);
+    }
   } else if (err instanceof StructuredOutputValidationError) {
     console.error(
       `Agent output stayed invalid after retrying with corrective feedback:\n` +

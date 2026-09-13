@@ -4,18 +4,18 @@ import type { StoryManifest } from "../../domain/value-objects/story-manifest.va
  * ── AI ENGINEERING CONCEPT: guardrails as a checkpoint, not a prompt ──
  *
  * Every prompt in this codebase already tells its model what NOT to do
- * (see claude-story-agent.ts's paragraph about the retrieved-context block,
- * claude-dev-agent.ts's about target-repo files). But an instruction in a
- * prompt is a request, not a guarantee — a sufficiently adversarial
- * retrieved-context block, or the model simply making a mistake, can still
- * produce output that leaked instructions it was told to ignore, or that
- * drifted outside this project's actual subject (a fantasy MMORPG). A
- * guardrail is a second, independent layer that inspects the OUTPUT after
- * the fact, in plain code the model has no influence over — the same
- * "don't just ask nicely, verify" principle behind schema validation
- * (run-structured-agent.ts) and referential-integrity checking
- * (validate-package.use-case.ts), applied to content safety instead of
- * structural correctness.
+ * (see openrouter-story-agent.ts's paragraph about the retrieved-context
+ * block, openrouter-dev-agent.ts's about target-repo files). But an
+ * instruction in a prompt is a request, not a guarantee — a sufficiently
+ * adversarial retrieved-context block, or the model simply making a
+ * mistake, can still produce output that leaked instructions it was told
+ * to ignore, or that drifted outside this project's actual subject (a
+ * fantasy MMORPG). A guardrail is a second, independent layer that
+ * inspects the OUTPUT after the fact, in plain code the model has no
+ * influence over — the same "don't just ask nicely, verify" principle
+ * behind schema validation (run-structured-openrouter-agent.ts) and
+ * referential-integrity checking (validate-package.use-case.ts), applied
+ * to content safety instead of structural correctness.
  *
  * This check is intentionally simple: pattern-matching for phrases that
  * indicate a successful prompt injection (the model echoing back

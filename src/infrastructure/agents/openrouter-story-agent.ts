@@ -90,10 +90,9 @@ prose, no markdown fences, no commentary outside the JSON.`;
 
 /**
  * OpenRouter counterpart to the retired ClaudeStoryAgent. Story has zero
- * tools and produces pure text-in-JSON-out — nothing here needs the Claude
- * Agent SDK's tool-execution loop, which is what makes it a clean fit for
- * a plain chat-completion call (unlike Art — see claude-art-agent.ts and
- * docs/ARCHITECTURE.md for why Art stayed on the Claude SDK).
+ * tools and produces pure text-in-JSON-out, a clean fit for a plain
+ * chat-completion call — see docs/ARCHITECTURE.md for why every agent
+ * (including Art, once it needed real tools) ended up on this same path.
  */
 export class OpenRouterStoryAgent implements IStoryAgent {
   constructor(

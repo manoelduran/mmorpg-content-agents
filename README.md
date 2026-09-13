@@ -6,18 +6,19 @@ A Clean Architecture multi-agent pipeline that turns a one-line brief
 stats, and sprite assets — for [Aetherbound Online](#), a Ragnarok-style
 pixel-art MMORPG.
 
-A hybrid, cost-aware setup: **Story and Dev** call
-[OpenRouter](https://openrouter.ai/) directly (plain, provider-agnostic chat
-completions — pick any model per agent, including free/cheap ones), while
-**Art** stays on the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
-the only one of the three that genuinely needs its tool-execution loop
-(Bash/Read/Glob/Write, for finding and reusing existing sprites). See
-"Why OpenRouter for Story/Dev, not OpenCode" in
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how that split was
-decided. Same Clean Architecture / DDD discipline the game's own backend
-uses throughout: `domain` → `application` → `infrastructure` →
-`presentation`, ports and use-cases, zero framework leakage into business
-logic.
+A cost-aware setup: all three agents call [OpenRouter](https://openrouter.ai/)
+directly (plain, provider-agnostic chat completions — pick any model per
+agent, including free/cheap ones). Art's model additionally needs vision
+input — it's shown thumbnails of sprites already committed to the game and
+decides whether one fits well enough to reuse, or writes a fresh
+generation prompt when nothing does; the file search itself (listing
+`mmorpg-frontend`'s sprites, thumbnailing candidates, copying the winner)
+is plain deterministic TypeScript, not something the model does. See "Why
+OpenRouter for all three agents, not OpenCode or the Claude Agent SDK" in
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how that landed. Same
+Clean Architecture / DDD discipline the game's own backend uses
+throughout: `domain` → `application` → `infrastructure` → `presentation`,
+ports and use-cases, zero framework leakage into business logic.
 
 ## Why this exists
 
@@ -37,7 +38,7 @@ non-issue as fifteen lines of TypeScript.
 |---|---|---|---|
 | **Master** | plain TypeScript (`OrchestrateContentGenerationUseCase`) | the final `ContentPackage` | Story, Art, Dev's outputs |
 | **Story** | OpenRouter chat completion | `StoryManifest` (lore, NPC roster, quests, portals/fields, instances) | the brief + retrieved World Registry context |
-| **Art** | Claude Agent SDK call, tool-enabled | `AssetManifest` (sprite files + provenance) | `StoryManifest` |
+| **Art** | OpenRouter chat completion, vision-capable model | `AssetManifest` (sprite files + provenance) | `StoryManifest` |
 | **Dev** | OpenRouter chat completion | `DevContent` (map sizes, spawn positions, quest counters, monster stats + drops) | `StoryManifest` + the target repo's own `CLAUDE.md`/`AGENTS.md` |
 
 Story runs first and alone, because Art and Dev both *depend* on the
@@ -92,10 +93,11 @@ own.
 ```bash
 npm install
 cp .env.example .env
-# set ANTHROPIC_API_KEY (Art), OPENROUTER_API_KEY (Story/Dev), and
-# OPENROUTER_STORY_MODEL / OPENROUTER_DEV_MODEL — pick current model ids
-# from https://openrouter.ai/models (no defaults are hardcoded; that
-# catalog, especially the free tier, changes often)
+# set OPENROUTER_API_KEY and OPENROUTER_STORY_MODEL / OPENROUTER_DEV_MODEL /
+# OPENROUTER_ART_MODEL — pick current model ids from
+# https://openrouter.ai/models (no defaults are hardcoded; that catalog,
+# especially the free tier, changes often). Art's model additionally needs
+# vision input — see .env.example's comment on that variable.
 
 npm run generate -- --brief "a coastal pirate town, level 15-20" \
   --backend-path ../mmorpg-backend \
@@ -162,8 +164,8 @@ src/
 ├── application/        # ports (interfaces) + use-cases, depends only on domain/
 │   ├── ports/
 │   └── use-cases/        orchestrate-content-generation is the Master's logic
-├── infrastructure/     # concrete adapters — the only layer that imports the Agent SDK / openai / fs
-│   ├── agents/            OpenRouterStoryAgent, ClaudeArtAgent, OpenRouterDevAgent
+├── infrastructure/     # concrete adapters — the only layer that imports openai / sharp / fs
+│   ├── agents/            OpenRouterStoryAgent, OpenRouterArtAgent, OpenRouterDevAgent
 │   └── persistence/       FilesystemTargetRepoConventions, FileManifestWriter
 └── presentation/
     └── cli/               generate-package.cli.ts — the one place everything gets wired together
@@ -173,30 +175,32 @@ Full breakdown and the sequence diagram: [`docs/ARCHITECTURE.md`](./docs/ARCHITE
 
 ## Known limitations (read before assuming this is fully autonomous)
 
-- **Art can't actually draw.** Claude doesn't generate raster images. The
-  Art agent's real job is search-first — reuse an existing sprite from
-  `mmorpg-frontend` or the local "Pixel Art Top Down - Basic" pack — and
-  only fall back to writing a ready-to-paste generation prompt
-  (`AssetEntry.source === 'generated'`) when nothing fits. Turning that
-  prompt into a pixel-art file is still a manual step today.
+- **Art can't actually draw.** No free model on OpenRouter can generate an
+  image as output (checked directly against
+  `https://openrouter.ai/models?output_modalities=image`). The Art agent's
+  real job is search-first — list what's already committed to
+  `mmorpg-frontend`, show a vision-capable model a handful of candidates
+  alongside the entity's narrative, and only fall back to writing a
+  ready-to-paste generation prompt (`AssetEntry.source === 'generated'`)
+  when nothing shown fits. Turning that prompt into a pixel-art file is
+  still a manual step today.
 - **Not yet run end-to-end against live API keys.** The pipeline typechecks
   cleanly and the schema-generation step (`npm run build:schema`) has been
   verified to run and produce valid JSON Schema; the three agent calls
-  themselves are implemented directly against each provider's documented
-  API but haven't had a real run logged here yet — needs both
-  `OPENROUTER_API_KEY` (Story/Dev) and `ANTHROPIC_API_KEY` (Art), and costs
-  real money on both.
+  themselves are implemented directly against OpenRouter's documented API
+  but haven't had a real run logged here yet — needs `OPENROUTER_API_KEY`
+  and costs real money for any non-free model you point at (Story/Dev/Art
+  can each be pointed at a free model independently).
 - **JSON Schema conformance from OpenRouter isn't guaranteed provider-to-
-  provider** (OpenRouter's own docs say so) — the Story/Dev path re-validates
-  every response with zod regardless (see `run-structured-openrouter-agent.ts`),
-  the same defense-in-depth the Claude SDK path already had.
+  provider** (OpenRouter's own docs say so) — every agent's path re-validates
+  every response with zod regardless (see `run-structured-openrouter-agent.ts`).
 - Tests cover the deterministic parts and the retry/self-correction logic
   (`node --test`, no mocking framework). `run-structured-openrouter-agent.ts`
-  (Story/Dev) has real unit coverage against a fake `ChatCompletionClient` —
-  success, transient-error retry, refusal, and self-correction paths are all
-  exercised without hitting the network. The Claude Agent SDK path (Art)
-  still isn't covered by an automated test, since its `query()` call isn't
-  easily fakeable the same way.
+  has real unit coverage against a fake `ChatCompletionClient`, shared by
+  all three agents — success, transient-error retry, refusal, and
+  self-correction paths are all exercised without hitting the network.
+  `openrouter-art-agent.test.ts` additionally covers its own file-listing/
+  thumbnailing/copying logic against a real temp directory.
 
 ## Status
 

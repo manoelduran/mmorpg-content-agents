@@ -7,16 +7,24 @@ import type {
   ChatCompletionClient,
   StructuredCompletionRequest,
   StructuredCompletionResult,
+  UserContent,
 } from "./openrouter-client";
 import type { RetryPolicy } from "../resilience/retry-policy";
 import { AgentRefusalError } from "../../domain/errors/agent-errors";
 
-// This is the test coverage the Claude Agent SDK path (run-structured-agent.ts)
-// has never had — the real query() isn't easily fakeable, but a single chat-
-// completion call behind a small interface is. See openrouter-client.ts's
-// doc comment for why this port exists.
+// A single chat-completion call behind a small interface is easy to fake
+// end-to-end, unlike a stateful SDK's own async-generator shape would be.
+// See openrouter-client.ts's doc comment for why this port exists.
 
 const TestSchema = z.object({ name: z.string(), count: z.number() });
+
+// Every scripted request in this file is plain text (Story/Dev's shape) —
+// Art's multimodal array shape is covered by openrouter-art-agent.test.ts
+// instead. This narrows for the handful of assert.match calls below.
+function asString(userPrompt: UserContent): string {
+  assert.equal(typeof userPrompt, "string");
+  return userPrompt as string;
+}
 
 const FAST_POLICY: RetryPolicy = {
   maxAttempts: 3,
@@ -119,8 +127,8 @@ test("runStructuredOpenRouterAgent: self-corrects after invalid output, feeding 
 
   assert.deepEqual(result, { name: "c", count: 3 });
   assert.equal(client.calls.length, 2);
-  assert.match(client.calls[1]!.userPrompt, /YOUR PREVIOUS ANSWER WAS INVALID/);
-  assert.match(client.calls[1]!.userPrompt, /original prompt/);
+  assert.match(asString(client.calls[1]!.userPrompt), /YOUR PREVIOUS ANSWER WAS INVALID/);
+  assert.match(asString(client.calls[1]!.userPrompt), /original prompt/);
 });
 
 test("runStructuredOpenRouterAgent: malformed JSON is treated as a self-correctable validation failure", async () => {
@@ -149,6 +157,6 @@ test("runStructuredOpenRouterAgent: extraValidation failures trigger the same se
 
   assert.deepEqual(result, { name: "pinned-name", count: 1 });
   assert.equal(client.calls.length, 2);
-  assert.match(client.calls[1]!.userPrompt, /YOUR PREVIOUS ANSWER WAS INVALID/);
-  assert.match(client.calls[1]!.userPrompt, /must be exactly 'pinned-name'/);
+  assert.match(asString(client.calls[1]!.userPrompt), /YOUR PREVIOUS ANSWER WAS INVALID/);
+  assert.match(asString(client.calls[1]!.userPrompt), /must be exactly 'pinned-name'/);
 });

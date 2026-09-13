@@ -1,25 +1,32 @@
 import OpenAI from "openai";
 
 /**
+ * Plain text for Story/Dev (zero tools, no reference material beyond
+ * text). Art needs to actually look at existing sprites before deciding
+ * whether to reuse one or write a fresh generation prompt — an array of
+ * content parts (text interleaved with `image_url` data URIs) is the
+ * standard OpenAI-compatible way to hand a vision-capable model both in
+ * one message. This is a type-level widening only: the `openai` package's
+ * own message content type already accepts either shape, so
+ * `createStructuredCompletion` below needs no change to pass it through.
+ */
+export type UserContent = string | OpenAI.Chat.Completions.ChatCompletionContentPart[];
+
+/**
  * ── AI ENGINEERING CONCEPT: a port around a third-party SDK ──
  *
- * `run-structured-agent.ts` (the Claude Agent SDK path) talks to `query()`
- * directly, with no interface in between — the SDK's own async-generator
- * shape isn't something worth wrapping just to satisfy "always use a port."
- * Here it's different: a single chat-completion call is simple enough that
- * wrapping it costs almost nothing, and doing so buys something real —
+ * A single chat-completion call is simple enough that wrapping it in an
+ * interface costs almost nothing, and doing so buys something real:
  * `run-structured-openrouter-agent.ts` can be unit-tested against a fake
- * implementation of this interface instead of the real network call, which
- * is coverage the Claude-SDK path has never had (see its test file for why:
- * the SDK isn't easily fakeable). This is the same "port + adapter" pattern
- * already used everywhere else in application/ports — just applied to
- * infrastructure this time, since nothing in application/ orchestrates an
- * LLM call directly.
+ * implementation of this interface instead of the real network call. This
+ * is the same "port + adapter" pattern already used everywhere else in
+ * application/ports — just applied to infrastructure this time, since
+ * nothing in application/ orchestrates an LLM call directly.
  */
 export interface StructuredCompletionRequest {
   model: string;
   systemPrompt: string;
-  userPrompt: string;
+  userPrompt: UserContent;
   /** Required by OpenAI's json_schema response format: a-z/A-Z/0-9/_/-, max 64 chars. */
   schemaName: string;
   schema: Record<string, unknown>;
@@ -30,9 +37,8 @@ export interface StructuredCompletionResult {
   refusal: string | null;
   finishReason: string | null;
   /** From usage.prompt_tokens_details.cached_tokens when the provider
-   * reports it — same honest, log-what's-real spirit as
-   * run-structured-agent.ts's logCacheUsage(), not asserted to always be
-   * present since OpenRouter proxies many providers with uneven support. */
+   * reports it — not asserted to always be present since OpenRouter
+   * proxies many providers with uneven support for this field. */
   cachedTokens?: number;
 }
 
@@ -98,6 +104,18 @@ export class OpenRouterChatCompletionClient implements ChatCompletionClient {
       // @ts-expect-error -- OpenRouter extension field, not in the openai package's types
       provider: { require_parameters: true },
     });
+
+    // Defensive: the `openai` package throws for a non-2xx HTTP response,
+    // but a 200 with a body that doesn't match the expected shape (no
+    // provider had an eligible route under provider.require_parameters,
+    // an upstream proxy error returned as 200, ...) slips through as a
+    // successful call with no `choices` — surface the raw body instead of
+    // crashing on `completion.choices[0]` with no diagnostic information.
+    if (!completion.choices || completion.choices.length === 0) {
+      throw new Error(
+        `OpenRouter returned a response with no choices for model '${request.model}': ${JSON.stringify(completion)}`,
+      );
+    }
 
     const choice = completion.choices[0];
     return {
