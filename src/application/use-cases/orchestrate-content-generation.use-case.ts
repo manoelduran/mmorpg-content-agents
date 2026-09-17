@@ -2,6 +2,8 @@ import type { IManifestWriter } from "../ports/manifest-writer.port";
 import type { ICheckpointStore } from "../ports/checkpoint-store.port";
 import type { IWorldRegistryRepository } from "../ports/world-registry-repository.port";
 import type { ContentPackage } from "../../domain/entities/content-package.entity";
+import type { DevContent } from "../../domain/value-objects/dev-content.value-object";
+import type { AssetEntry } from "../../domain/value-objects/asset-manifest.value-object";
 import { addEntry, buildWorldRegistryEntry } from "../../domain/entities/world-registry.entity";
 import { GenerateStoryUseCase } from "./generate-story.use-case";
 import { GenerateAssetsUseCase } from "./generate-assets.use-case";
@@ -104,24 +106,69 @@ export class OrchestrateContentGenerationUseCase {
     const assetsOutputDir = `${input.outputRoot}/${story.cityId}/assets`;
 
     // 2. Art and Dev don't depend on each other, only on Story — run them
-    // together. Dev additionally needs the target repo's live conventions.
-    // Skip both if a checkpoint already has them.
-    let assets, dev;
-    if (existing?.phase === "assets_and_dev") {
-      ({ assets, dev } = existing);
-    } else {
-      const [conventions, generatedAssets] = await Promise.all([
-        this.loadConventions.execute(input.backendPath, input.frontendPath),
-        this.generateAssets.execute(story, assetsOutputDir),
-      ]);
-      assets = generatedAssets;
-      dev = await this.generateDevContent.execute(story, conventions, existingCity);
-      await this.checkpoints.save(input.runId, {
+    // CONCURRENTLY, each checkpointed independently of the other the
+    // moment it makes progress (Dev the instant it finishes; Art after
+    // every completed batch of its ~26 entity calls). This is the fix for
+    // a real failure mode: Dev is fast and nearly always finishes first,
+    // but the OLD code awaited Art and Dev sequentially in a way that
+    // meant Dev's already-finished result got thrown away whenever Art
+    // died later (a timeout, a quota error) — and a resumed Art call
+    // redid all ~26 entities even if only the last few hadn't finished.
+    // Neither problem exists once each side saves its own progress as
+    // soon as it has any. A resume where both are already fully done
+    // costs nothing extra: Dev is skipped outright below, and Art's own
+    // todo list (see OpenRouterArtAgent.generate) comes back empty.
+    let dev: DevContent | undefined =
+      existing?.phase === "assets_and_dev" ? existing.dev : undefined;
+    let completedAssets: AssetEntry[] =
+      existing?.phase === "assets_and_dev" ? existing.completedAssets : [];
+
+    const conventions = await this.loadConventions.execute(
+      input.backendPath,
+      input.frontendPath,
+    );
+
+    const saveProgress = () =>
+      this.checkpoints.save(input.runId, {
         phase: "assets_and_dev",
         story,
-        assets,
         dev,
+        completedAssets,
       });
+
+    // Promise.allSettled, not Promise.all: if Art rejects while Dev is
+    // still in flight, Promise.all would reject THIS await immediately,
+    // returning control to the CLI's error handler (which calls
+    // process.exit) potentially before Dev's own in-progress
+    // `await saveProgress()` ever gets a turn to run — losing exactly the
+    // finished work this whole change exists to protect. Waiting for both
+    // to settle first guarantees whichever one succeeded is safely on
+    // disk before anything can end the process.
+    const [assetsResult, devResult] = await Promise.allSettled([
+      this.generateAssets.execute(story, assetsOutputDir, {
+        alreadyCompleted: completedAssets,
+        onBatchComplete: async (updated) => {
+          completedAssets = updated;
+          await saveProgress();
+        },
+      }),
+      (async () => {
+        if (dev === undefined) {
+          dev = await this.generateDevContent.execute(story, conventions, existingCity);
+          await saveProgress();
+        }
+      })(),
+    ]);
+
+    if (assetsResult.status === "rejected") throw assetsResult.reason;
+    if (devResult.status === "rejected") throw devResult.reason;
+    const assets = assetsResult.value;
+
+    if (dev === undefined) {
+      // Unreachable: the IIFE above always assigns dev before resolving
+      // successfully, and a rejection was already rethrown just above.
+      // Guards the type only — TS can't see through the closure mutation.
+      throw new Error("unreachable: dev must be set once the assets_and_dev phase resolves");
     }
 
     // 3. Merge + validate. A referential-integrity failure here means a

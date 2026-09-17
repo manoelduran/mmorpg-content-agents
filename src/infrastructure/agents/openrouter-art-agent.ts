@@ -1,8 +1,8 @@
-import { readdirSync, existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import sharp from "sharp";
 import { z } from "zod";
-import type { IArtAgent } from "../../application/ports/art-agent.port";
+import type { IArtAgent, ArtGenerationResume } from "../../application/ports/art-agent.port";
 import type { StoryManifest } from "../../domain/value-objects/story-manifest.value-object";
 import {
   AssetManifestSchema,
@@ -15,44 +15,29 @@ import { untrustedBlock } from "./prompt-safety";
 
 const ART_AGENT_SYSTEM_PROMPT = `You are the Art agent for Aetherbound Online, a pixel-art top-down MMORPG.
 
-You cannot generate raster images yourself. For every entity you're asked
-about, you're shown a handful of existing sprites already committed to the
-game (as images, numbered, with their real filenames) alongside that
-entity's narrative. Decide ONE of two things:
+A human draws every sprite by hand from your description — you never reuse
+or copy an existing file, even if one looks close enough. Every entity
+gets its own freshly written prompt, always.
 
-1. "reuse" — one of the shown candidates already fits this entity well
-   enough to stand in for it (a generic monster/NPC silhouette that suits
-   the flavor, not necessarily a perfect thematic match). Set
-   reuseFilename to that candidate's EXACT filename as given — never a
-   filename you weren't shown, never a modified or invented one.
-2. "generate" — nothing shown fits. Write a complete, ready-to-paste
-   image-generation prompt in generationPrompt, in the SAME pixel-art
-   style as the reference images you were shown (describe what you
-   actually see in them: line weight, shading style, palette approach,
-   background/transparency treatment) applied to this entity's own
-   narrative. Someone will paste this directly into an image generator, so
-   it must stand alone with no reference to "the images above."
+You're shown a handful of existing sprites already committed to the game,
+purely as a STYLE reference (line weight, shading, palette approach,
+background/transparency treatment) — describe what you actually see in
+them and carry that same visual style into your prompt, but never suggest
+reusing one of them outright, and never mention "the images above" in your
+prompt itself (the person pasting it into a generator won't have them).
+
+Write a complete, ready-to-paste image-generation prompt for this specific
+entity, grounded in its narrative, in that established style. It must
+stand entirely on its own.
 
 Respond with a single JSON object matching the given schema exactly — no
 prose, no markdown fences, no commentary outside the JSON.`;
 
-const ArtDecisionSchema = z.object({
+const ArtPromptSchema = z.object({
   entityId: z.string(),
-  decision: z.enum(["reuse", "generate"]),
-  reuseFilename: z
-    .string()
-    .nullable()
-    .describe(
-      "Exact filename from the numbered candidate list, required when decision is 'reuse'; null otherwise",
-    ),
-  generationPrompt: z
-    .string()
-    .nullable()
-    .describe(
-      "A ready-to-paste pixel-art generation prompt, required when decision is 'generate'; null otherwise",
-    ),
+  generationPrompt: z.string().describe("A ready-to-paste pixel-art generation prompt"),
 });
-type ArtDecision = z.infer<typeof ArtDecisionSchema>;
+type ArtPromptResult = z.infer<typeof ArtPromptSchema>;
 
 interface ArtEntity {
   entityId: string;
@@ -60,46 +45,81 @@ interface ArtEntity {
   narrative: string;
 }
 
-const MAX_REFERENCE_IMAGES = 6;
+const MAX_STYLE_REFERENCE_IMAGES = 4;
 const THUMBNAIL_MAX_DIMENSION = 160;
+
+/** How many entities' prompts are written concurrently. A full city is
+ * ~26 entities (8 npcs + field/instance monsters) and each call is
+ * multimodal (image thumbnails), so fully sequential was the slowest part
+ * of a run by far. Kept deliberately small (not "many", per the tradeoff
+ * below) — OpenRouter's free tier caps at 20 requests/min per model, and
+ * a failed attempt still burns quota, so a wide burst is the wrong place
+ * to spend that budget. */
+const ART_CONCURRENCY = 3;
 
 /**
  * OpenRouter counterpart to the retired ClaudeArtAgent. Claude's version
  * had real tools (Bash/Read/Glob) to search mmorpg-frontend for a reusable
- * sprite; a plain chat-completion model has none of that, so the search
- * itself moves into this deterministic TypeScript (listing files, picking
- * candidates, copying the winner) — the model's only job is the genuinely
- * creative part: looking at a handful of candidate images plus the
- * entity's narrative and deciding reuse-vs-generate, exactly the kind of
- * judgment call this project already keeps behind an LLM boundary while
- * everything mechanical stays in code (see docs/ARCHITECTURE.md's "Why a
- * Master that isn't itself an LLM call").
+ * sprite; this agent doesn't search for one at all — every entity gets a
+ * freshly written prompt for a human to draw, by explicit choice (reuse
+ * kept producing repeats of sprites already in the game, which isn't
+ * useful when a human is drawing everything anyway). The handful of
+ * existing sprites shown to the model are style reference only, never
+ * reuse candidates.
  *
- * One call per entity rather than one big batched call: each call's image
- * payload is small and independent, so a single entity's transient
- * failure or self-correction retry doesn't touch the other ~25 in the
- * same city, and it mirrors how Story/Dev already treat one call as one
- * unit of retryable work.
+ * One call per entity rather than one big batched call, issued in small
+ * concurrent groups (ART_CONCURRENCY) rather than one giant Promise.all:
+ * each call's image payload is small and independent, so this still
+ * mirrors how Story/Dev treat one call as one unit of retryable work —
+ * it's just several units in flight at once now instead of one. It's
+ * also resumable at batch granularity (see the `resume` param): if a run
+ * dies partway through ~26 entities (a timeout, a quota error), a retry
+ * only redoes whatever batch was in flight when it died, not everyone.
  */
 export class OpenRouterArtAgent implements IArtAgent {
   constructor(
     private readonly client: ChatCompletionClient,
     private readonly model: string,
-    /** Absolute path to mmorpg-frontend's public/images — the "images we
-     * already have" this agent looks at, both for reuse candidates and as
-     * a style reference when nothing fits. */
+    /** Absolute path to mmorpg-frontend's public/images — shown to the
+     * model purely as a style reference, never copied from. */
     private readonly frontendImagesDir: string,
   ) {}
 
-  async generate(story: StoryManifest, outputDir: string): Promise<AssetManifest> {
+  // outputDir is part of IArtAgent's contract (where a reused/copied file
+  // would land) but unused here on purpose — this agent never writes a
+  // file, only a prompt (see class doc comment).
+  async generate(
+    story: StoryManifest,
+    _outputDir: string,
+    resume?: ArtGenerationResume,
+  ): Promise<AssetManifest> {
     const referenceFiles = this.listReferenceFiles();
-    const entities = this.collectEntities(story);
+    const allEntities = this.collectEntities(story);
 
-    const entries: AssetEntry[] = [];
-    for (const entity of entities) {
-      const candidates = this.pickReferenceCandidates(referenceFiles, entity);
-      const decision = await this.decideOne(story, entity, candidates);
-      entries.push(await this.materialize(entity, decision, candidates, outputDir));
+    // Entities a prior attempt already finished are neither re-requested
+    // from the model nor re-counted — a resume where everything is
+    // already done costs nothing beyond this filter (the loop below
+    // simply never runs).
+    const alreadyDone = resume?.alreadyCompleted ?? [];
+    const doneIds = new Set(alreadyDone.map((e) => e.entityId));
+    const pending = allEntities.filter((e) => !doneIds.has(e.entityId));
+
+    const entries: AssetEntry[] = [...alreadyDone];
+    for (let i = 0; i < pending.length; i += ART_CONCURRENCY) {
+      const batch = pending.slice(i, i + ART_CONCURRENCY);
+      const batchEntries = await Promise.all(
+        batch.map(async (entity) => {
+          const styleRefs = this.pickStyleReferences(referenceFiles, entity);
+          const result = await this.writePromptFor(story, entity, styleRefs);
+          return this.toAssetEntry(entity, result);
+        }),
+      );
+      entries.push(...batchEntries);
+      // Checkpointed after every batch, not every single entity: batches
+      // already serialize (the next one doesn't start until this await
+      // resolves), so there's no risk of two saves racing each other —
+      // see checkpoint-store.port.ts's `completedAssets` doc comment.
+      await resume?.onBatchComplete(entries);
     }
 
     return AssetManifestSchema.parse({ cityId: story.cityId, assets: entries });
@@ -136,16 +156,13 @@ export class OpenRouterArtAgent implements IArtAgent {
   }
 
   /**
-   * Cheap keyword overlap between the entity's own words (name split on
-   * non-alphanumerics) and each candidate filename's words — no embeddings,
-   * no extra model call just to shortlist. Ties/no-matches fall back to the
-   * first files alphabetically, so every entity still gets *some* visual
-   * style reference even when nothing looks like a thematic match.
+   * Cheap keyword overlap between the entity's own words and each
+   * candidate filename's words, same shortlisting heuristic as before —
+   * these are style anchors now, not reuse candidates, so the model sees
+   * a small, thematically-close sample rather than the entire repo.
    */
-  private pickReferenceCandidates(files: string[], entity: ArtEntity): string[] {
-    const entityWords = new Set(
-      entity.narrative.toLowerCase().match(/[a-z0-9]+/g) ?? [],
-    );
+  private pickStyleReferences(files: string[], entity: ArtEntity): string[] {
+    const entityWords = new Set(entity.narrative.toLowerCase().match(/[a-z0-9]+/g) ?? []);
     const scored = files
       .map((file) => {
         const words = basename(file, extname(file)).toLowerCase().split(/[-_]+/);
@@ -156,34 +173,31 @@ export class OpenRouterArtAgent implements IArtAgent {
 
     const picked: string[] = [];
     for (const { file, score } of scored) {
-      if (picked.length >= MAX_REFERENCE_IMAGES) break;
+      if (picked.length >= MAX_STYLE_REFERENCE_IMAGES) break;
       if (score > 0) picked.push(file);
     }
     for (const file of files) {
-      if (picked.length >= MAX_REFERENCE_IMAGES) break;
+      if (picked.length >= MAX_STYLE_REFERENCE_IMAGES) break;
       if (!picked.includes(file)) picked.push(file);
     }
     return picked;
   }
 
-  private async buildImageContentParts(
-    candidates: string[],
+  private async buildStyleReferenceParts(
+    files: string[],
   ): Promise<{ text: string; parts: Extract<UserContent, unknown[]> }> {
-    if (candidates.length === 0) {
-      return {
-        text: "No existing sprites are available to reference — you must choose 'generate'.",
-        parts: [],
-      };
+    if (files.length === 0) {
+      return { text: "No existing sprites are available as a style reference.", parts: [] };
     }
-
     const parts: Extract<UserContent, unknown[]> = [];
-    const lines: string[] = ["Candidate existing sprites (numbered, matching the images below in order):"];
-    for (const [index, file] of candidates.entries()) {
-      lines.push(`${index + 1}. ${file}`);
+    for (const file of files) {
       const dataUrl = await this.thumbnail(join(this.frontendImagesDir, file));
       parts.push({ type: "image_url", image_url: { url: dataUrl } });
     }
-    return { text: lines.join("\n"), parts };
+    return {
+      text: "Style reference only (do not suggest reusing any of these):",
+      parts,
+    };
   }
 
   private async thumbnail(absolutePath: string): Promise<string> {
@@ -195,103 +209,55 @@ export class OpenRouterArtAgent implements IArtAgent {
     return `data:image/jpeg;base64,${buffer.toString("base64")}`;
   }
 
-  private async decideOne(
+  private async writePromptFor(
     story: StoryManifest,
     entity: ArtEntity,
-    candidates: string[],
-  ): Promise<ArtDecision> {
-    const { text: candidateList, parts: imageParts } = await this.buildImageContentParts(candidates);
+    styleRefs: string[],
+  ): Promise<ArtPromptResult> {
+    const { text: refText, parts: imageParts } = await this.buildStyleReferenceParts(styleRefs);
 
     const promptText = `City: ${story.cityName} — atmosphere: ${story.atmosphereKeywords.join(", ")}
 
 ${untrustedBlock("NARRATIVE", entity.entityId, entity.narrative)}
 
-${candidateList}`;
+${refText}`;
 
     const userContent: UserContent =
       imageParts.length === 0 ? promptText : [{ type: "text", text: promptText }, ...imageParts];
 
-    return runStructuredOpenRouterAgent<ArtDecision>(userContent, {
+    return runStructuredOpenRouterAgent<ArtPromptResult>(userContent, {
       agentType: "art",
       systemPrompt: ART_AGENT_SYSTEM_PROMPT,
       model: this.model,
-      schemaName: "art_decision",
-      outputSchema: z.toJSONSchema(ArtDecisionSchema) as Record<string, unknown>,
-      zodSchema: ArtDecisionSchema,
+      schemaName: "art_prompt",
+      outputSchema: z.toJSONSchema(ArtPromptSchema) as Record<string, unknown>,
+      zodSchema: ArtPromptSchema,
       client: this.client,
-      extraValidation: (decision) => validateDecision(decision, entity, candidates),
+      extraValidation: (result) => validatePrompt(result, entity),
     });
   }
 
-  private async materialize(
-    entity: ArtEntity,
-    decision: ArtDecision,
-    candidates: string[],
-    outputDir: string,
-  ): Promise<AssetEntry> {
+  private toAssetEntry(entity: ArtEntity, result: ArtPromptResult): AssetEntry {
     const kindFolder = entity.kind === "npc" ? "npcs" : "monsters";
-
-    if (decision.decision === "reuse") {
-      // extraValidation already confirmed reuseFilename is one of `candidates`.
-      const filename = decision.reuseFilename!;
-      const sourcePath = join(this.frontendImagesDir, filename);
-      const destDir = join(outputDir, "assets", kindFolder);
-      mkdirSync(destDir, { recursive: true });
-      const destPath = join(destDir, filename);
-      copyFileSync(sourcePath, destPath);
-
-      return {
-        entityId: entity.entityId,
-        relativePath: `assets/${kindFolder}/${filename}`,
-        source: "reused-from-repo",
-        sourceDetail: `Reused from mmorpg-frontend/public/images/${filename} (matched by the art agent from ${candidates.length} candidate(s) shown).`,
-        // Never trust the model's own claim about a file it didn't inspect
-        // pixel-by-pixel — verify the real alpha channel on the actual
-        // bytes we just copied, same discipline the original Claude-tool
-        // prompt asked for ("check with a quick script").
-        transparent: await hasRealTransparency(readFileSync(sourcePath)),
-      };
-    }
-
     return {
       entityId: entity.entityId,
-      // No file exists yet — this is where the asset SHOULD land once a
-      // human (or a future pluggable image-gen step) turns the prompt into
-      // a real file. Matches the pre-refactor ClaudeArtAgent convention.
+      // No file exists — a human draws this by hand from the prompt below.
+      // This is where the finished sprite should land once they do.
       relativePath: `assets/${kindFolder}/${entity.entityId}.png`,
       source: "generated",
-      sourceDetail: decision.generationPrompt!,
+      sourceDetail: result.generationPrompt,
       transparent: false,
     };
   }
 }
 
-function validateDecision(decision: ArtDecision, entity: ArtEntity, candidates: string[]): string[] {
+function validatePrompt(result: ArtPromptResult, entity: ArtEntity): string[] {
   const issues: string[] = [];
-  if (decision.entityId !== entity.entityId) {
-    issues.push(`entityId must be exactly '${entity.entityId}', got '${decision.entityId}'`);
+  if (result.entityId !== entity.entityId) {
+    issues.push(`entityId must be exactly '${entity.entityId}', got '${result.entityId}'`);
   }
-  if (decision.decision === "reuse") {
-    if (!decision.reuseFilename) {
-      issues.push("decision is 'reuse' but reuseFilename is null");
-    } else if (!candidates.includes(decision.reuseFilename)) {
-      issues.push(
-        `reuseFilename '${decision.reuseFilename}' was not one of the candidates shown: ${candidates.join(", ")}`,
-      );
-    }
-  } else {
-    if (!decision.generationPrompt || decision.generationPrompt.trim().length === 0) {
-      issues.push("decision is 'generate' but generationPrompt is empty");
-    }
+  if (!result.generationPrompt || result.generationPrompt.trim().length === 0) {
+    issues.push("generationPrompt is empty");
   }
   return issues;
-}
-
-async function hasRealTransparency(buffer: Buffer): Promise<boolean> {
-  const img = sharp(buffer);
-  const meta = await img.metadata();
-  if (!meta.hasAlpha) return false;
-  const stats = await img.stats();
-  const alphaChannel = stats.channels[stats.channels.length - 1];
-  return (alphaChannel?.min ?? 255) < 255;
 }

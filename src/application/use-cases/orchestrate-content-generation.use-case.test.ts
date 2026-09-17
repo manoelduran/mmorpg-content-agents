@@ -11,7 +11,7 @@ import { RetrieveWorldContextUseCase } from "./retrieve-world-context.use-case";
 import { ApplyContentGuardrailsUseCase } from "./apply-content-guardrails.use-case";
 import { LoadExistingCityContextUseCase } from "./load-existing-city-context.use-case";
 import type { IStoryAgent } from "../ports/story-agent.port";
-import type { IArtAgent } from "../ports/art-agent.port";
+import type { IArtAgent, ArtGenerationResume } from "../ports/art-agent.port";
 import type { IDevAgent } from "../ports/dev-agent.port";
 import type { IExistingCityContextProvider } from "../ports/existing-city-context-provider.port";
 import type { ExistingCityContext } from "../../domain/value-objects/existing-city-context.value-object";
@@ -56,12 +56,25 @@ class RecordingFakeStoryAgent implements IStoryAgent {
   }
 }
 
+// Resume-aware, modeling the real OpenRouterArtAgent's contract (see
+// art-agent.port.ts): if a prior attempt already finished everything,
+// this is a free no-op — no call, nothing new to checkpoint. Otherwise it
+// "does the work" in one shot and reports it via onBatchComplete, same as
+// a real single-batch run would.
 class RecordingFakeArtAgent implements IArtAgent {
   calls = 0;
   received?: StoryManifest;
-  async generate(story: StoryManifest): Promise<AssetManifest> {
+  async generate(
+    story: StoryManifest,
+    _outputDir: string,
+    resume?: ArtGenerationResume,
+  ): Promise<AssetManifest> {
+    if ((resume?.alreadyCompleted.length ?? 0) > 0) {
+      return { cityId: ASSETS.cityId, assets: resume!.alreadyCompleted };
+    }
     this.calls++;
     this.received = story;
+    await resume?.onBatchComplete(ASSETS.assets);
     return ASSETS;
   }
 }
@@ -227,10 +240,13 @@ test("orchestrator throws with every violation when Dev drifts from Story", asyn
 
 // ── Checkpoint/recovery: the actual point of this feature ──
 // A real crash mid-pipeline is simulated here by having Dev fail on its
-// first call. The checkpoint saved after Story succeeds should mean a
-// SECOND orchestrator instance, sharing the same checkpoint store and
-// runId, resumes without re-invoking Story or Art — proving recovery
-// doesn't re-pay for work already finished.
+// first call, AFTER Art has already finished. Art's success must be
+// checkpointed independently of Dev's failure — a resumed second
+// orchestrator instance must not re-invoke Story OR Art, only Dev. This
+// is the fix for a real incident: the old code awaited Art and Dev
+// sequentially inside one Promise.all-then-await, so Art's already-done
+// work was silently thrown away whenever Dev (or Art itself, on a later
+// run) failed afterward.
 test("resuming after a failure skips already-completed phases", async () => {
   const checkpoints = new InMemoryCheckpointStore();
 
@@ -287,14 +303,142 @@ test("resuming after a failure skips already-completed phases", async () => {
   });
 
   assert.equal(pkg.cityId, "test-city");
-  // The whole point: resuming must NOT call Story again — its checkpointed
-  // result from the first attempt is reused as-is. Art/Dev run together
-  // as one checkpoint phase (they're dispatched in the same
-  // Promise.all — see orchestrate-content-generation.use-case.ts), so a
-  // crash before THAT phase finished means both get redone on resume;
-  // only Story's own, earlier phase was safely checkpointed.
+  // The whole point: resuming must NOT call Story OR Art again — both
+  // already succeeded and were checkpointed independently on the first
+  // attempt, even though that attempt overall failed (Dev died after
+  // them). Only Dev, the thing that actually failed, runs again.
   assert.equal(secondAttempt.storyAgent.calls.length, 0);
-  assert.equal(secondAttempt.artAgent.calls, 1);
+  assert.equal(secondAttempt.artAgent.calls, 0);
+});
+
+// ── The reverse case: this is the actual incident that motivated the fix ──
+// Art is the slow one (~26 calls) and is far more likely to be the side
+// that fails (timeout, daily quota). Dev — fast, one call — must survive
+// that and not be redone on resume.
+test("an Art failure doesn't throw away Dev's already-finished result", async () => {
+  const checkpoints = new InMemoryCheckpointStore();
+
+  class FailsOnceArtAgent implements IArtAgent {
+    calls = 0;
+    async generate(
+      _story: StoryManifest,
+      _outputDir: string,
+      resume?: ArtGenerationResume,
+    ): Promise<AssetManifest> {
+      this.calls++;
+      if (this.calls === 1) throw new Error("simulated art timeout");
+      if ((resume?.alreadyCompleted.length ?? 0) > 0) {
+        return { cityId: ASSETS.cityId, assets: resume!.alreadyCompleted };
+      }
+      await resume?.onBatchComplete(ASSETS.assets);
+      return ASSETS;
+    }
+  }
+
+  const firstAttempt = buildOrchestrator(checkpoints);
+  const failingArtAgent = new FailsOnceArtAgent();
+  const firstOrchestrator = new OrchestrateContentGenerationUseCase(
+    new GenerateStoryUseCase(firstAttempt.storyAgent),
+    new LoadTargetRepoConventionsUseCase(new FakeTargetRepoConventions()),
+    new GenerateAssetsUseCase(failingArtAgent),
+    new GenerateDevContentUseCase(firstAttempt.devAgent),
+    new AssemblePackageUseCase(),
+    new ValidatePackageUseCase(),
+    firstAttempt.writer,
+    checkpoints,
+    new RetrieveWorldContextUseCase(firstAttempt.worldRegistry),
+    firstAttempt.worldRegistry,
+    new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new InMemoryExistingCityContextProvider()),
+  );
+
+  await assert.rejects(
+    () =>
+      firstOrchestrator.execute({
+        brief: "a coastal pirate town, level 15-20",
+        outputRoot: "/fake/output",
+        backendPath: "/fake/mmorpg-backend",
+        runId: "run-art-resume",
+      }),
+    /simulated art timeout/,
+  );
+
+  assert.equal(firstAttempt.devAgent.calls, 1);
+
+  const secondAttempt = buildOrchestrator(checkpoints);
+  const { package: pkg } = await secondAttempt.orchestrator.execute({
+    brief: "a coastal pirate town, level 15-20",
+    outputRoot: "/fake/output",
+    backendPath: "/fake/mmorpg-backend",
+    runId: "run-art-resume",
+  });
+
+  assert.equal(pkg.cityId, "test-city");
+  // Dev already succeeded and was checkpointed before Art failed —
+  // resuming must not call it again.
+  assert.equal(secondAttempt.devAgent.calls, 0);
+});
+
+// ── The race the fix is actually for ──
+// Real API calls don't resolve/reject in the same microtask tick the way
+// the fakes above do. Here Dev deliberately finishes strictly AFTER Art
+// has already rejected, to prove Dev's progress still gets checkpointed
+// before orchestrator.execute() itself rejects — i.e. that Promise.all
+// (which rejects as soon as ANY input rejects, leaving the other one to
+// keep running orphaned in the background) was replaced with something
+// that waits for both to settle first. Under the old Promise.all, a
+// caller that calls process.exit() right after catching this rejection
+// (exactly what generate-package.cli.ts does) could kill the process
+// before Dev's still-pending checkpoint write ever happened.
+test("Dev's checkpoint is saved even if it finishes strictly after Art has already failed", async () => {
+  const checkpoints = new InMemoryCheckpointStore();
+
+  class ThrowsImmediatelyArtAgent implements IArtAgent {
+    async generate(): Promise<AssetManifest> {
+      throw new Error("simulated art timeout");
+    }
+  }
+  class SlowDevAgent implements IDevAgent {
+    calls = 0;
+    async generate(): Promise<DevContent> {
+      this.calls++;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return DEV;
+    }
+  }
+
+  const slowDevAgent = new SlowDevAgent();
+  const orchestrator = new OrchestrateContentGenerationUseCase(
+    new GenerateStoryUseCase(new RecordingFakeStoryAgent()),
+    new LoadTargetRepoConventionsUseCase(new FakeTargetRepoConventions()),
+    new GenerateAssetsUseCase(new ThrowsImmediatelyArtAgent()),
+    new GenerateDevContentUseCase(slowDevAgent),
+    new AssemblePackageUseCase(),
+    new ValidatePackageUseCase(),
+    new RecordingFakeManifestWriter(),
+    checkpoints,
+    new RetrieveWorldContextUseCase(new InMemoryWorldRegistryRepository()),
+    new InMemoryWorldRegistryRepository(),
+    new ApplyContentGuardrailsUseCase(),
+    new LoadExistingCityContextUseCase(new InMemoryExistingCityContextProvider()),
+  );
+
+  await assert.rejects(
+    () =>
+      orchestrator.execute({
+        brief: "a coastal pirate town, level 15-20",
+        outputRoot: "/fake/output",
+        backendPath: "/fake/mmorpg-backend",
+        runId: "run-race",
+      }),
+    /simulated art timeout/,
+  );
+
+  // execute() only rejected once Dev's 20ms delay was also over — proving
+  // the rejection didn't outrace Dev's own checkpoint save.
+  const saved = await checkpoints.load("run-race");
+  assert.equal(saved?.phase, "assets_and_dev");
+  assert.ok(saved?.phase === "assets_and_dev" && saved.dev !== undefined);
 });
 
 test("resuming a run that already finished returns the cached package without calling any agent", async () => {
