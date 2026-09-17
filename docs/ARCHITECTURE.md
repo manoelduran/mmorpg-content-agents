@@ -65,21 +65,27 @@ matching sprite" isn't actually a task that benefits from an agent
 thumbnail some candidates) that Master-style deterministic code can just
 do, the same reasoning this doc already applies to orchestration itself.
 `OpenRouterArtAgent` does exactly that: it lists `mmorpg-frontend`'s sprite
-files and thumbnails candidates in plain TypeScript, then hands the model
-only the genuinely creative decision — look at a few candidate images plus
-the entity's narrative, decide reuse-vs-generate. That's a single
+files and thumbnails a handful of them in plain TypeScript, then hands the
+model only the genuinely creative part — write a fresh generation prompt
+for this entity, informed by that style reference. That's a single
 vision-capable chat-completion call, the same shape as Story/Dev, no tool
 loop needed. See `openrouter-art-agent.ts`.
 
-One real constraint this introduced: as of this writing, no free model on
-OpenRouter can *generate* an image as output (checked
-`https://openrouter.ai/models?output_modalities=image` directly — every
-image-output model listed is paid). `OpenRouterArtAgent` was designed
-around that fact rather than against it: it never asks a model to produce
-an image, only to reason over ones it's shown. When nothing existing fits,
-the output is still a ready-to-paste generation prompt for a human (or a
-future pluggable image-gen step) — same contract `ClaudeArtAgent` always
-had, see "Known limitation" below.
+An earlier version of this agent could also decide to *reuse* one of the
+shown sprites outright instead of writing a prompt. That got removed: a
+human draws every sprite by hand for this project, and "reuse" just meant
+the same handful of existing sprites getting recommended over and over
+instead of new art ever getting made. The shown sprites are a style
+reference now, nothing more — every entity always gets its own prompt.
+
+One real constraint this introduced (independent of the reuse decision
+above): as of this writing, no free model on OpenRouter can *generate* an
+image as output (checked `https://openrouter.ai/models?output_modalities=image`
+directly — every image-output model listed is paid). `OpenRouterArtAgent`
+was designed around that fact rather than against it: it never asks a
+model to produce an image, only to reason over ones it's shown and write a
+prompt a human turns into the real file — same contract `ClaudeArtAgent`
+always had, see "Known limitation" below.
 
 See `openrouter-client.ts` for the `ChatCompletionClient` port this
 introduced (and why it's a port when a raw SDK call isn't — the answer is
@@ -136,14 +142,73 @@ structurally drift from what Story already committed to (it can still get
 individual ids wrong, which is what `checkReferentialIntegrity` in
 `content-package.entity.ts` catches).
 
+### Checkpointing inside the Art/Dev step
+
+Story and Dev are each one call; Art is ~26 (one per npc/monster, issued
+in small concurrent batches — see `ART_CONCURRENCY` in
+`openrouter-art-agent.ts`), so it's both the slowest step and the one most
+likely to hit a transient failure or the OpenRouter free-tier daily quota
+partway through. `OrchestrateContentGenerationUseCase` checkpoints Art and
+Dev **independently of each other**, and Art checkpoints **after every
+batch**, not just at the end:
+
+- Dev's result is saved the instant it finishes, regardless of what Art is
+  still doing.
+- Art's finished entries are saved after every completed batch; a resume
+  passes those back in as `ArtGenerationResume.alreadyCompleted`, and the
+  agent only requests the entities still missing — a crash after 20 of 26
+  entities means a resume redoes at most the last incomplete batch, not
+  all 26.
+- Both sides are awaited with `Promise.allSettled`, not `Promise.all` —
+  if Art rejects while Dev is still in flight, `Promise.all` would let
+  that rejection propagate immediately, and a caller that calls
+  `process.exit()` right after catching it (`generate-package.cli.ts`
+  does) could kill the process before Dev's own in-progress checkpoint
+  write ever ran. Waiting for both to settle first guarantees whichever
+  one succeeded is safely on disk before either the reject or the process
+  exit can happen.
+
+## Skills: on-demand capabilities outside the fixed pipeline
+
+Everything above is the Master's one fixed sequence — every run does
+Story, then Art+Dev, every time, even if you only want to fix one thing.
+A **Skill** (`application/ports/skill.port.ts`) is the escape hatch: a
+narrow, independently-callable unit — `interface Skill<TInput, TOutput> {
+name: string; execute(input: TInput): Promise<TOutput>; }` — invoked
+standalone, against an *already-generated* `manifest.json`, when only one
+small piece needs regenerating.
+
+The first one: `GenerateShopInventorySkill`
+(`infrastructure/agents/generate-shop-inventory.skill.ts`). Everything
+`shopInventories` needs was originally one piece of `OpenRouterDevAgent`'s
+single giant prompt (map + quests + monsters + shops, all in one call).
+Decomposed into its own skill, it's a small prompt + the already-existing
+`ShopInventorySchema`, callable in isolation via its own entrypoint,
+`presentation/cli/regenerate-shop.cli.ts`:
+
+```bash
+npm run regenerate:shop -- --manifest output/aethelgard/manifest.json --npc-id harbor-merchant
+```
+
+That CLI reads the manifest back (`ContentPackageSchema.parse`), calls the
+skill for just that one NPC, splices the result into
+`dev.shopInventories`, re-runs `checkReferentialIntegrity` (the same check
+a full pipeline run gets — a skill's output isn't trusted any less), and
+writes the manifest back atomically. No Story/Art call, no touching maps
+or quests. This is what "the Master can invoke a specific skill on demand
+instead of only running the fixed sequence" means concretely — today
+that's a second CLI entrypoint rather than a flag the orchestrator itself
+exposes, since there's exactly one skill so far; if more show up, a
+shared `SkillRegistry`/dispatcher would be the next step, not before.
+
 ## Layers (mirrors mmorpg-backend's Clean Architecture exactly)
 
 | Layer | Contains | Depends on |
 |---|---|---|
 | `domain/` | zod schemas + inferred types (`StoryManifest`, `AssetManifest`, `DevContent`, `ContentPackage`, and the shared `city-template.value-object.ts` cardinalities they're both built from) and pure functions (`checkReferentialIntegrity`) | nothing |
-| `application/` | `ports/` (interfaces: `IStoryAgent`, `IArtAgent`, `IDevAgent`, `ITargetRepoConventions`, `IManifestWriter`) and `use-cases/` (orchestration + validation logic) | `domain/` only |
-| `infrastructure/` | Concrete adapters: `OpenRouterStoryAgent`/`OpenRouterDevAgent`/`OpenRouterArtAgent` (all OpenRouter via `openai`), `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
-| `presentation/` | `generate-package.cli.ts` (the only place that wires ports to adapters via manual constructor injection) | everything |
+| `application/` | `ports/` (interfaces: `IStoryAgent`, `IArtAgent`, `IDevAgent`, `ITargetRepoConventions`, `IManifestWriter`, `Skill<TInput, TOutput>`) and `use-cases/` (orchestration + validation logic) | `domain/` only |
+| `infrastructure/` | Concrete adapters: `OpenRouterStoryAgent`/`OpenRouterDevAgent`/`OpenRouterArtAgent` (all OpenRouter via `openai`), `GenerateShopInventorySkill`, `FilesystemTargetRepoConventions`, `FileManifestWriter` | implements `application/ports` |
+| `presentation/` | `generate-package.cli.ts` (full pipeline) and `regenerate-shop.cli.ts` (single skill) — each entrypoint wires its own ports to adapters via manual constructor injection | everything |
 
 Same rule as `mmorpg-backend/AGENTS.md`: the domain layer never imports a
 framework, an agent SDK, or the filesystem. `application/` only knows about
@@ -188,14 +253,13 @@ as corrective feedback. The generic infra never needs to know what
 ## Known limitation: the Art agent can't actually draw
 
 No free OpenRouter model can generate an image as output (see above), and
-even paid ones are a separate concern from this pipeline's job.
-`OpenRouterArtAgent`'s real job is search-first: list what's already
-committed to `mmorpg-frontend`, show the model a handful of candidates
-alongside the entity's narrative, and only fall back to `source:
-'generated'` with a ready-to-paste generation prompt when nothing shown
-fits well enough — mirroring the manual ChatGPT-browser-automation
-workflow this project used before agents existed. Turning that prompt into
-a real file is still a manual (or pluggable, future) step; see
+even paid ones are a separate concern from this pipeline's job — every
+sprite is hand-drawn by a human. `OpenRouterArtAgent`'s real job is
+therefore always `source: 'generated'`: it shows the model a handful of
+existing sprites purely as a style reference, then writes a ready-to-paste
+generation prompt for every single entity, no exceptions — mirroring the
+manual ChatGPT-browser-automation workflow this project used before agents
+existed. Turning that prompt into a real file is a manual step; see
 `AssetEntry.source` in `src/domain/value-objects/asset-manifest.value-object.ts`.
 
 ## Out of scope for v1

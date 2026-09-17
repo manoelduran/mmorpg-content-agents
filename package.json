@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "scripts": {
     "generate": "tsx --env-file-if-exists=.env src/presentation/cli/generate-package.cli.ts",
+    "regenerate:shop": "tsx --env-file-if-exists=.env src/presentation/cli/regenerate-shop.cli.ts",
     "build:schema": "tsx src/presentation/cli/build-schema.cli.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",

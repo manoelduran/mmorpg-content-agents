@@ -9,11 +9,10 @@ pixel-art MMORPG.
 A cost-aware setup: all three agents call [OpenRouter](https://openrouter.ai/)
 directly (plain, provider-agnostic chat completions — pick any model per
 agent, including free/cheap ones). Art's model additionally needs vision
-input — it's shown thumbnails of sprites already committed to the game and
-decides whether one fits well enough to reuse, or writes a fresh
-generation prompt when nothing does; the file search itself (listing
-`mmorpg-frontend`'s sprites, thumbnailing candidates, copying the winner)
-is plain deterministic TypeScript, not something the model does. See "Why
+input — it's shown thumbnails of sprites already committed to the game
+purely as a style reference, and writes a fresh generation prompt for
+every entity, always; a human draws every sprite by hand, so the agent
+never reuses or produces a file itself. See "Why
 OpenRouter for all three agents, not OpenCode or the Claude Agent SDK" in
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how that landed. Same
 Clean Architecture / DDD discipline the game's own backend uses
@@ -162,28 +161,37 @@ src/
 │   ├── entities/         content-package.entity.ts (+ checkReferentialIntegrity)
 │   └── value-objects/    story-manifest, asset-manifest, dev-content
 ├── application/        # ports (interfaces) + use-cases, depends only on domain/
-│   ├── ports/
+│   ├── ports/             ...IStoryAgent, IDevAgent, IArtAgent, Skill<TInput, TOutput>
 │   └── use-cases/        orchestrate-content-generation is the Master's logic
 ├── infrastructure/     # concrete adapters — the only layer that imports openai / sharp / fs
-│   ├── agents/            OpenRouterStoryAgent, OpenRouterArtAgent, OpenRouterDevAgent
+│   ├── agents/            OpenRouterStoryAgent, OpenRouterArtAgent, OpenRouterDevAgent, GenerateShopInventorySkill
 │   └── persistence/       FilesystemTargetRepoConventions, FileManifestWriter
 └── presentation/
-    └── cli/               generate-package.cli.ts — the one place everything gets wired together
+    └── cli/               generate-package.cli.ts (full pipeline), regenerate-shop.cli.ts (one skill, standalone)
 ```
 
 Full breakdown and the sequence diagram: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
+### Regenerating just one piece: Skills
+
+Not every change needs a full city rerun. `npm run regenerate:shop --
+--manifest output/<cityId>/manifest.json --npc-id <merchant-or-blacksmith-id>`
+regenerates a single NPC's shop inventory in an already-generated
+manifest, in isolation — no Story/Art call, no touching maps or quests.
+See "Skills: on-demand capabilities outside the fixed pipeline" in
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for what this pattern is
+and how it composes with the fixed pipeline above.
+
 ## Known limitations (read before assuming this is fully autonomous)
 
-- **Art can't actually draw.** No free model on OpenRouter can generate an
-  image as output (checked directly against
-  `https://openrouter.ai/models?output_modalities=image`). The Art agent's
-  real job is search-first — list what's already committed to
-  `mmorpg-frontend`, show a vision-capable model a handful of candidates
-  alongside the entity's narrative, and only fall back to writing a
-  ready-to-paste generation prompt (`AssetEntry.source === 'generated'`)
-  when nothing shown fits. Turning that prompt into a pixel-art file is
-  still a manual step today.
+- **Art can't actually draw, and by design never reuses either.** No free
+  model on OpenRouter can generate an image as output (checked directly
+  against `https://openrouter.ai/models?output_modalities=image`), and
+  every sprite in this project is hand-drawn by a human anyway. The Art
+  agent shows a vision-capable model a handful of existing sprites as a
+  style reference only, then always writes a fresh, ready-to-paste
+  generation prompt for every entity (`AssetEntry.source === 'generated'`,
+  always) — turning that prompt into a pixel-art file is a manual step.
 - **Not yet run end-to-end against live API keys.** The pipeline typechecks
   cleanly and the schema-generation step (`npm run build:schema`) has been
   verified to run and produce valid JSON Schema; the three agent calls
