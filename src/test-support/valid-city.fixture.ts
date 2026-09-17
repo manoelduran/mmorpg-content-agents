@@ -30,6 +30,8 @@ export function buildValidStory(): StoryManifest {
     name: `${direction} Gate`,
     direction,
     fieldId: fields[i]!.id,
+    outboundGuardian: { name: `${direction} Outbound Guardian`, flavor: "watches the gate out" },
+    returnGuide: { name: `${direction} Return Guide`, flavor: "watches the gate back" },
   }));
 
   const instances = [0, 1].map((ii) => ({
@@ -37,6 +39,13 @@ export function buildValidStory(): StoryManifest {
     name: `Instance ${ii}`,
     theme: "a forgotten ruin",
     instanceMasterNpcId: `instance-master-${ii}`,
+    bossCompletion: {
+      questGiverName: `Instance ${ii} Herald`,
+      questTitle: `Defeat the Boss of Instance ${ii}`,
+      questNarrative: "The herald wants proof the boss is dead.",
+      lockedMessage: "The way back is sealed.",
+      unlockedMessage: "The way back is open.",
+    },
     monsters: [
       { id: `instance-${ii}-normal-0`, name: "Normal Foe A", flavor: "flavor", role: "NORMAL" as const },
       { id: `instance-${ii}-normal-1`, name: "Normal Foe B", flavor: "flavor", role: "NORMAL" as const },
@@ -101,6 +110,11 @@ export function buildValidDev(story: StoryManifest): DevContent {
       portalId: p.id,
       position: { x: 25, y: i % 2 === 0 ? 1 : 48, z: 0 },
     })),
+    portalGuardianPlacements: story.portals.map((p, i) => ({
+      portalId: p.id,
+      outboundGuardianPosition: { x: 25, y: i % 2 === 0 ? 1 : 48, z: 0 },
+      returnGuidePosition: { x: 25, y: i % 2 === 0 ? 48 : 1, z: 0 },
+    })),
     questObjectives: story.quests.map((q) => ({
       questId: q.id,
       objectiveType: q.objectiveType,
@@ -152,6 +166,22 @@ export function buildValidDev(story: StoryManifest): DevContent {
         drops: [],
       })),
     })),
+    instanceCompanionPlacements: story.instances.map((inst) => ({
+      instanceId: inst.id,
+      questGiverPosition: { x: 10, y: 10, z: 0 },
+      returnPortalPosition: { x: 11, y: 10, z: 0 },
+    })),
+    shopInventories: story.npcs
+      .filter((n) => n.role === "MERCHANT" || n.role === "BLACKSMITH")
+      .map((n) => ({
+        npcId: n.id,
+        items: Array.from({ length: 4 }, (_, i) => ({
+          itemName: `${n.name} Item ${i}`,
+          itemType: "MATERIAL" as const,
+          price: 10 + i,
+          description: "a shop item",
+        })),
+      })),
   };
 }
 

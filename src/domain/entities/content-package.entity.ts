@@ -142,6 +142,33 @@ export function checkReferentialIntegrity(pkg: ContentPackage): string[] {
     }
   }
 
+  // --- Shop inventories: exactly the MERCHANT/BLACKSMITH npcs, 1:1 ---
+  const shopNpcIds = pkg.story.npcs
+    .filter((n) => n.role === "MERCHANT" || n.role === "BLACKSMITH")
+    .map((n) => n.id);
+  const devShopNpcIds = pkg.dev.shopInventories.map((s) => s.npcId);
+  if (!sameIdSet(devShopNpcIds, shopNpcIds)) {
+    errors.push(
+      "dev.shopInventories must cover exactly the MERCHANT/BLACKSMITH npcs listed in story.npcs, 1:1",
+    );
+  }
+
+  // --- Portal guardians: exactly the portals, 1:1 ---
+  const devPortalGuardianIds = pkg.dev.portalGuardianPlacements.map((p) => p.portalId);
+  if (!sameIdSet(devPortalGuardianIds, pkg.story.portals.map((p) => p.id))) {
+    errors.push(
+      "dev.portalGuardianPlacements must cover exactly the portals listed in story.portals, 1:1",
+    );
+  }
+
+  // --- Instance companions: exactly the instances, 1:1 ---
+  const devInstanceCompanionIds = pkg.dev.instanceCompanionPlacements.map((i) => i.instanceId);
+  if (!sameIdSet(devInstanceCompanionIds, [...instanceIds])) {
+    errors.push(
+      "dev.instanceCompanionPlacements must cover exactly the instances listed in story.instances, 1:1",
+    );
+  }
+
   const devInstanceIds = pkg.dev.instances.map((i) => i.instanceId);
   if (!sameIdSet(devInstanceIds, [...instanceIds])) {
     errors.push("dev.instances must cover exactly the instances listed in story.instances, 1:1");

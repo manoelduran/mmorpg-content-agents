@@ -42,14 +42,31 @@ must be one of their ids), each objectiveType either:
     exist to teach players about the new content, on top of granting XP
 
 PORTALS — exactly ${CITY_PORTAL_COUNT}, one per cardinal direction (NORTH/SOUTH/EAST/WEST),
-each leading to exactly one FIELD (1:1, no sharing).
+each leading to exactly one FIELD (1:1, no sharing). There is no "just walk
+through" teleport in this game — every portal is gated by an NPC in both
+directions, so each portal ALSO needs:
+  - outboundGuardian: a name + one-sentence flavor for who stands on the
+    city side and lets the player out into the field
+  - returnGuide: a name + one-sentence flavor for who stands on the field
+    side (thematically fitting that field) and lets the player back in
+These two are NOT part of the ${Object.values(CITY_NPC_ROLE_COUNTS).reduce((a, b) => a + b, 0)}-npc roster above — don't count them
+against it, don't give them ids, they're purely narrative flavor for this
+portal.
 
 FIELDS — exactly ${CITY_FIELD_COUNT}, each with exactly ${CITY_FIELD_MONSTER_COUNT} distinct monster types
 (flavor only here — the Dev agent assigns their stats/drops later).
 
 INSTANCES — exactly ${CITY_INSTANCE_COUNT}, each owned by one of the 2 INSTANCE_MASTER npcs
 (instanceMasterNpcId, one each, never shared), each with exactly
-${CITY_INSTANCE_MONSTER_COUNT} monsters: ${INSTANCE_MONSTER_ROLE_COUNTS.NORMAL}x role NORMAL + ${INSTANCE_MONSTER_ROLE_COUNTS.BOSS}x role BOSS.
+${CITY_INSTANCE_MONSTER_COUNT} monsters: ${INSTANCE_MONSTER_ROLE_COUNTS.NORMAL}x role NORMAL + ${INSTANCE_MONSTER_ROLE_COUNTS.BOSS}x role BOSS. A player
+doesn't just walk out of an instance — they must kill its BOSS monster and
+turn that in as a quest to a companion NPC standing inside, who also
+guards the only way back out (locked until the quest is turned in). Each
+instance therefore ALSO needs a bossCompletion block: questGiverName (that
+companion NPC — again, not one of the roster's ${Object.values(CITY_NPC_ROLE_COUNTS).reduce((a, b) => a + b, 0)} npcs), questTitle,
+questNarrative (why this NPC wants the boss dead), lockedMessage (shown at
+the return portal before the quest is turned in), and unlockedMessage
+(shown once it is).
 
 Also write: a city lore paragraph fitting the existing world ("O Paradoxo
 das Eras" — a world fractured into temporal biomes anchored by the city

@@ -58,8 +58,20 @@ export function buildWorldRegistryEntry(
     brief,
     lore: story.lore,
     atmosphereKeywords: story.atmosphereKeywords,
-    npcNames: story.npcs.map((npc) => npc.name),
-    questTitles: story.quests.map((quest) => quest.title),
+    // Portal guardians/return-guides and instance quest-giver companions
+    // are named characters too, just not part of the 8-slot roster (see
+    // PortalGuardianBriefSchema/InstanceBossCompletionSchema) — folded in
+    // here so a future city's Story agent won't collide with their names
+    // either.
+    npcNames: [
+      ...story.npcs.map((npc) => npc.name),
+      ...story.portals.flatMap((p) => [p.outboundGuardian.name, p.returnGuide.name]),
+      ...story.instances.map((i) => i.bossCompletion.questGiverName),
+    ],
+    questTitles: [
+      ...story.quests.map((quest) => quest.title),
+      ...story.instances.map((i) => i.bossCompletion.questTitle),
+    ],
     monsterNames: [
       ...story.fields.flatMap((field) => field.monsters.map((monster) => monster.name)),
       ...story.instances.flatMap((instance) => instance.monsters.map((monster) => monster.name)),

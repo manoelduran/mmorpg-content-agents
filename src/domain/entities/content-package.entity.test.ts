@@ -70,3 +70,30 @@ test("checkReferentialIntegrity: catches an npc that was never placed on the map
 
   assert.ok(violations.some((v) => v.includes("npcPlacements must place exactly the npcs")));
 });
+
+test("checkReferentialIntegrity: catches a shop inventory missing for a MERCHANT/BLACKSMITH npc", () => {
+  const pkg = buildValidPackage();
+  pkg.dev.shopInventories = pkg.dev.shopInventories.slice(1);
+
+  const violations = checkReferentialIntegrity(pkg);
+
+  assert.ok(violations.some((v) => v.includes("shopInventories must cover exactly the MERCHANT/BLACKSMITH npcs")));
+});
+
+test("checkReferentialIntegrity: catches a portal with no guardian placement", () => {
+  const pkg = buildValidPackage();
+  pkg.dev.portalGuardianPlacements = pkg.dev.portalGuardianPlacements.slice(1);
+
+  const violations = checkReferentialIntegrity(pkg);
+
+  assert.ok(violations.some((v) => v.includes("portalGuardianPlacements must cover exactly the portals")));
+});
+
+test("checkReferentialIntegrity: catches an instance with no companion placement", () => {
+  const pkg = buildValidPackage();
+  pkg.dev.instanceCompanionPlacements = pkg.dev.instanceCompanionPlacements.slice(1);
+
+  const violations = checkReferentialIntegrity(pkg);
+
+  assert.ok(violations.some((v) => v.includes("instanceCompanionPlacements must cover exactly the instances")));
+});

@@ -8,6 +8,8 @@ import {
   CITY_FIELD_MONSTER_COUNT,
   CITY_INSTANCE_COUNT,
   CITY_INSTANCE_MONSTER_COUNT,
+  CITY_SHOP_NPC_COUNT,
+  SHOP_ITEM_COUNT,
 } from "./city-template.value-object";
 
 /**
@@ -172,14 +174,63 @@ export const CityQuestObjectiveListSchema = z
   .array(QuestObjectiveSchema)
   .length(CITY_QUEST_COUNT);
 
+export const ShopItemTypeSchema = z.enum(["EQUIPMENT", "CONSUMABLE", "MATERIAL"]);
+
+export const ShopItemSchema = z.object({
+  itemName: z.string(),
+  itemType: ShopItemTypeSchema,
+  price: z.number().int().positive(),
+  description: z.string(),
+});
+export type ShopItem = z.infer<typeof ShopItemSchema>;
+
+export const ShopInventorySchema = z.object({
+  npcId: z.string().describe("Matches the MERCHANT or BLACKSMITH npc's id in StoryManifest"),
+  items: z.array(ShopItemSchema).length(SHOP_ITEM_COUNT),
+});
+export type ShopInventory = z.infer<typeof ShopInventorySchema>;
+export const CityShopInventoryListSchema = z
+  .array(ShopInventorySchema)
+  .length(CITY_SHOP_NPC_COUNT);
+
+export const PortalGuardianPlacementSchema = z.object({
+  portalId: z.string().describe("Matches StoryManifest portals[].id"),
+  outboundGuardianPosition: PositionSchema.describe(
+    "On the city map, right at the portal, matching its direction",
+  ),
+  returnGuidePosition: PositionSchema.describe(
+    "On the destination field map (fieldMaps[].mapId for this portal's " +
+      "fieldId), on the edge closest to the city",
+  ),
+});
+export type PortalGuardianPlacement = z.infer<typeof PortalGuardianPlacementSchema>;
+export const CityPortalGuardianPlacementListSchema = z
+  .array(PortalGuardianPlacementSchema)
+  .length(CITY_PORTAL_COUNT);
+
+export const InstanceCompanionPlacementSchema = z.object({
+  instanceId: z.string().describe("Matches StoryManifest instances[].id"),
+  questGiverPosition: PositionSchema.describe("On this instance's own map"),
+  returnPortalPosition: PositionSchema.describe(
+    "On this instance's own map, near the quest giver",
+  ),
+});
+export type InstanceCompanionPlacement = z.infer<typeof InstanceCompanionPlacementSchema>;
+export const CityInstanceCompanionPlacementListSchema = z
+  .array(InstanceCompanionPlacementSchema)
+  .length(CITY_INSTANCE_COUNT);
+
 export const DevContentSchema = z.object({
   cityId: z.string(),
   map: MapDefinitionSchema,
   npcPlacements: CityNpcPlacementListSchema,
   portalPlacements: CityPortalPlacementListSchema,
+  portalGuardianPlacements: CityPortalGuardianPlacementListSchema,
   questObjectives: CityQuestObjectiveListSchema,
   fieldMaps: CityFieldMapListSchema,
   instances: CityInstanceDefinitionListSchema,
+  instanceCompanionPlacements: CityInstanceCompanionPlacementListSchema,
+  shopInventories: CityShopInventoryListSchema,
 });
 
 export type DevContent = z.infer<typeof DevContentSchema>;

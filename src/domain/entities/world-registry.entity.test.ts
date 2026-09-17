@@ -77,8 +77,28 @@ test("buildWorldRegistryEntry: pulls names out of every part of a story manifest
   const built = buildWorldRegistryEntry(story, "a coastal pirate town");
 
   assert.equal(built.cityId, story.cityId);
-  assert.equal(built.npcNames.length, story.npcs.length);
-  assert.equal(built.questTitles.length, story.quests.length);
+  // npcNames also folds in portal guardians/return-guides and instance
+  // boss-completion quest-givers — named characters that aren't part of
+  // the 8-slot roster but still need to be name-deduplicated against
+  // future cities (see buildWorldRegistryEntry's doc comment).
+  const expectedNpcNameCount =
+    story.npcs.length + story.portals.length * 2 + story.instances.length;
+  assert.equal(built.npcNames.length, expectedNpcNameCount);
+  for (const npc of story.npcs) assert.ok(built.npcNames.includes(npc.name));
+  for (const portal of story.portals) {
+    assert.ok(built.npcNames.includes(portal.outboundGuardian.name));
+    assert.ok(built.npcNames.includes(portal.returnGuide.name));
+  }
+  for (const instance of story.instances) {
+    assert.ok(built.npcNames.includes(instance.bossCompletion.questGiverName));
+  }
+
+  // questTitles also folds in each instance's boss-kill quest.
+  assert.equal(built.questTitles.length, story.quests.length + story.instances.length);
+  for (const instance of story.instances) {
+    assert.ok(built.questTitles.includes(instance.bossCompletion.questTitle));
+  }
+
   const expectedMonsterCount =
     story.fields.reduce((n, f) => n + f.monsters.length, 0) +
     story.instances.reduce((n, i) => n + i.monsters.length, 0);

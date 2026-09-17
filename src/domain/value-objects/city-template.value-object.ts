@@ -37,6 +37,12 @@ export const CITY_NPC_COUNT = Object.values(CITY_NPC_ROLE_COUNTS).reduce(
   0,
 ); // 8
 
+/** The MERCHANT and the BLACKSMITH are the only roster roles that
+ * actually sell anything — every other role (TELEPORTER, QUEST_GIVER,
+ * INSTANCE_MASTER) has a mechanic of its own already. */
+export const CITY_SHOP_NPC_COUNT = CITY_NPC_ROLE_COUNTS.MERCHANT + CITY_NPC_ROLE_COUNTS.BLACKSMITH; // 2
+export const SHOP_ITEM_COUNT = 4;
+
 export const CityNpcSchema = z.object({
   id: z
     .string()
@@ -135,6 +141,20 @@ export const CityFieldListSchema = z
   .array(FieldBriefSchema)
   .length(CITY_FIELD_COUNT);
 
+/**
+ * The real game gates every portal behind an NPC, both directions — there
+ * is no "just walk onto a tile" teleport (see mmorpg-backend's Gatekeeper
+ * mechanism). A portal's guardian pair isn't part of the fixed 8-npc
+ * roster (CityNpcRosterSchema) — it's structurally 1:1 with the portal
+ * itself, exactly like direction/fieldId, so it's modeled here instead of
+ * competing for one of the 8 roster slots.
+ */
+export const PortalGuardianBriefSchema = z.object({
+  name: z.string(),
+  flavor: z.string().describe("One sentence describing this guardian's presence/manner"),
+});
+export type PortalGuardianBrief = z.infer<typeof PortalGuardianBriefSchema>;
+
 export const PortalBriefSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -142,6 +162,13 @@ export const PortalBriefSchema = z.object({
     "The city edge this portal sits at — exactly one portal per direction",
   ),
   fieldId: z.string().describe("Matches exactly one fields[].id — 1:1"),
+  outboundGuardian: PortalGuardianBriefSchema.describe(
+    "Stands on the city side, lets the player OUT into the field",
+  ),
+  returnGuide: PortalGuardianBriefSchema.describe(
+    "Stands on the field side, on the edge closest to the city (opposite " +
+      "the direction the player arrived from), lets the player back IN",
+  ),
 });
 export type PortalBrief = z.infer<typeof PortalBriefSchema>;
 
@@ -179,6 +206,30 @@ export const InstanceMonsterBriefSchema = z.object({
 });
 export type InstanceMonsterBrief = z.infer<typeof InstanceMonsterBriefSchema>;
 
+/**
+ * How a player actually leaves an instance: not by walking back out the
+ * way they came, but by killing the BOSS monster and turning that in as a
+ * quest to a companion NPC standing inside the instance — who is also the
+ * one guarding a second, initially-locked portal back to the city (see
+ * mmorpg-backend's Gatekeeper.requiredQuestIds). Two companion NPCs, not
+ * one of the 8-roster slots, same reasoning as PortalGuardianBriefSchema:
+ * they're structurally 1:1 with the instance itself.
+ */
+export const InstanceBossCompletionSchema = z.object({
+  questGiverName: z
+    .string()
+    .describe("NPC standing inside the instance who gives, and later receives, the boss-kill quest"),
+  questTitle: z.string(),
+  questNarrative: z.string().describe("Why this NPC wants the boss dead"),
+  lockedMessage: z
+    .string()
+    .describe("What the return-portal NPC says before the boss-kill quest is turned in"),
+  unlockedMessage: z
+    .string()
+    .describe("What the return-portal NPC says once the quest is complete"),
+});
+export type InstanceBossCompletion = z.infer<typeof InstanceBossCompletionSchema>;
+
 export const InstanceBriefSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -186,6 +237,7 @@ export const InstanceBriefSchema = z.object({
   instanceMasterNpcId: z
     .string()
     .describe("Must match one of the 2 INSTANCE_MASTER npcs' id"),
+  bossCompletion: InstanceBossCompletionSchema,
   monsters: z
     .array(InstanceMonsterBriefSchema)
     .length(CITY_INSTANCE_MONSTER_COUNT)

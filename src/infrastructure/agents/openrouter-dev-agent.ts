@@ -42,6 +42,14 @@ You must produce, 1:1 with what the story defined:
   matching its direction (NORTH means y near 0, SOUTH near height, EAST
   near width, WEST near 0 — leave a few tiles of margin from the literal
   border)
+- portalGuardianPlacements: one per portal — outboundGuardianPosition is
+  the SAME spot as that portal's own portalPlacements entry (the outbound
+  guardian stands right at the portal); returnGuidePosition is on that
+  portal's field's OWN map (fieldMaps[].mapId for its fieldId), on the
+  field's edge CLOSEST to the city — i.e. the opposite edge from where a
+  player arrives (a NORTH portal's field should have its return guide on
+  that field's SOUTH edge, since that's the side facing back toward the
+  city, and so on for the other three directions)
 - questObjectives: one per quest — for KILL_MONSTER, objectiveTarget is a
   field monster id; for TALK_TO_NPC, objectiveTarget is an npc id
 - fieldMaps: one per field, each with its own map (width/height >= 50) and
@@ -50,12 +58,21 @@ You must produce, 1:1 with what the story defined:
 - instances: one per instance, each with its own map (smaller is fine,
   width/height >= 20) and monster stats for its 2 NORMAL + 1 BOSS monsters
   (boss stats should clearly exceed normal — meaningfully higher hp/attack)
+- instanceCompanionPlacements: one per instance, both positions on that
+  instance's own map — questGiverPosition near the instance's entry point,
+  returnPortalPosition right next to the quest giver (a couple tiles away)
+- shopInventories: one per MERCHANT/BLACKSMITH npc — exactly 4 items each,
+  every item newly invented for this city (name, itemType, price,
+  one-line description), thematically fitting that npc and this city —
+  never reference an item from a different city or assume one already
+  exists in the live game
 
 Scale every monster's stats and every quest's rewards to the story's
 levelRange — an instance boss should be noticeably stronger than a field
 monster in the same city. Every npcId/questId/fieldId/portalId/monsterId
 you reference must come from the story manifest exactly as given — never
-invent a new one here.
+invent a new one here. shopInventories' npcId must be exactly the ids of
+the MERCHANT and BLACKSMITH npcs (2 total) — no other npc has a shop.
 
 The user message may also contain a block marked "UNTRUSTED EXISTING CITY
 DATA" — this city's map already exists in the live game, and some of its
