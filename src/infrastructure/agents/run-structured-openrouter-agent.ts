@@ -14,6 +14,7 @@ import {
   TransientAgentError,
   AgentRefusalError,
   StructuredOutputValidationError,
+  QuotaExceededError,
 } from "../../domain/errors/agent-errors";
 import type { ChatCompletionClient, UserContent } from "./openrouter-client";
 
@@ -156,16 +157,32 @@ async function runOnce<T>(
   return parsed.data;
 }
 
+/** OpenRouter's free-tier daily quota error arrives as a plain
+ * RateLimitError (HTTP 429) indistinguishable by status code alone from a
+ * short-lived per-minute rate limit — the only signal is this phrase in
+ * the message body. See QuotaExceededError's doc comment for why this
+ * gets a completely different (non-retrying) treatment from every other
+ * 429. */
+function isQuotaExceeded(err: RateLimitError): boolean {
+  return /free-models-per-day/i.test(err.message);
+}
+
 /**
- * Only the openai package's genuinely-transient error types (rate limit,
- * 5xx, connection drop/timeout) get wrapped as TransientAgentError.
- * Everything else (bad API key, malformed request, a provider rejecting
- * the schema outright, ...) is a configuration/request problem retrying
- * won't fix — rethrown unchanged so classify()'s catch-all below fails
- * fast, rather than mislabeling "we misconfigured something" as "the model
- * refused."
+ * Only the openai package's genuinely-transient error types (a short-lived
+ * rate limit, 5xx, connection drop/timeout) get wrapped as
+ * TransientAgentError. Everything else (bad API key, malformed request, a
+ * provider rejecting the schema outright, ...) is a configuration/request
+ * problem retrying won't fix — rethrown unchanged so classify()'s
+ * catch-all below fails fast, rather than mislabeling "we misconfigured
+ * something" as "the model refused."
  */
 function classifyClientError(agentType: string, err: unknown): unknown {
+  if (err instanceof RateLimitError && isQuotaExceeded(err)) {
+    return new QuotaExceededError(
+      `Agent '${agentType}' call failed — OpenRouter's free-tier daily request quota is exhausted`,
+      err,
+    );
+  }
   if (
     err instanceof RateLimitError ||
     err instanceof InternalServerError ||
@@ -181,7 +198,7 @@ function classify(
   error: unknown,
   attemptInput: AttemptInput,
 ): { retryable: boolean; nextInput: AttemptInput } {
-  if (error instanceof AgentRefusalError) {
+  if (error instanceof AgentRefusalError || error instanceof QuotaExceededError) {
     return { retryable: false, nextInput: attemptInput };
   }
 

@@ -10,7 +10,7 @@ import type {
   UserContent,
 } from "./openrouter-client";
 import type { RetryPolicy } from "../resilience/retry-policy";
-import { AgentRefusalError } from "../../domain/errors/agent-errors";
+import { AgentRefusalError, QuotaExceededError } from "../../domain/errors/agent-errors";
 
 // A single chat-completion call behind a small interface is easy to fake
 // end-to-end, unlike a stateful SDK's own async-generator shape would be.
@@ -92,6 +92,30 @@ test("runStructuredOpenRouterAgent: retries a transient client error, then succe
 
   assert.deepEqual(result, { name: "b", count: 2 });
   assert.equal(client.calls.length, 2);
+});
+
+test("runStructuredOpenRouterAgent: OpenRouter's daily free-tier quota error fails without retrying (retrying would only burn more of the same quota)", async () => {
+  const client = new FakeChatCompletionClient([
+    async () => {
+      // error (2nd arg) must be undefined here, not {} — the openai SDK's
+      // APIError.makeMessage() treats ANY truthy `error` object as the
+      // message source (JSON.stringify'd), silently discarding the 3rd
+      // `message` arg otherwise. Passing {} looks harmless but produces
+      // `.message === "429 {}"`, not the string below.
+      throw new RateLimitError(
+        429,
+        undefined,
+        "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+        new Headers(),
+      );
+    },
+  ]);
+
+  await assert.rejects(
+    () => runStructuredOpenRouterAgent("prompt", baseConfig(client)),
+    QuotaExceededError,
+  );
+  assert.equal(client.calls.length, 1);
 });
 
 test("runStructuredOpenRouterAgent: a refusal fails without retrying", async () => {

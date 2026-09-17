@@ -23,6 +23,7 @@ import {
   AgentRefusalError,
   TransientAgentError,
   StructuredOutputValidationError,
+  QuotaExceededError,
 } from "../../domain/errors/agent-errors";
 import { PackageValidationError } from "../../application/use-cases/validate-package.use-case";
 
@@ -65,22 +66,32 @@ function parseArgs(argv: string[]): CliArgs {
     return i === -1 ? undefined : argv[i + 1];
   };
 
-  const brief = get("--brief");
-  if (!brief) {
-    console.error(
-      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes] [--run-id <id>] [--existing-city <path>]',
-    );
-    process.exit(1);
-  }
-
   // --run-id is the idempotency key (see checkpoint-store.port.ts): pass
   // one back in to resume a failed run instead of redoing finished
   // phases. Left unset, we mint a fresh one and print it, since there's
   // nothing to resume on a brand-new run.
   const explicitRunId = get("--run-id");
 
+  // --brief is required to start a new run, but a resume that already got
+  // past Story (the common case — Art/Dev are what actually fail) never
+  // reads it at all (see orchestrate-content-generation.use-case.ts's
+  // `existing?.phase === "story"` branch) — don't force the caller to
+  // retype it just to satisfy this parser. If you're resuming a run that
+  // crashed BEFORE Story ever completed, you still need --brief; you'll
+  // get a clear failure from the Story agent itself if you omit it there.
+  const brief = get("--brief");
+  if (!brief && !explicitRunId) {
+    console.error(
+      'Usage: npm run generate -- --brief "<city description>" [--backend-path ../mmorpg-backend] [--frontend-path ../mmorpg-frontend] [--output output] [--yes] [--run-id <id>] [--existing-city <path>]',
+    );
+    process.exit(1);
+  }
+
   return {
-    brief,
+    // Only ever read by GenerateStoryUseCase, which a resume past the
+    // "story" checkpoint phase never calls — safe placeholder for that
+    // case; see the comment above on why --brief is optional here.
+    brief: brief ?? "",
     storyModel: requireEnv("OPENROUTER_STORY_MODEL"),
     devModel: requireEnv("OPENROUTER_DEV_MODEL"),
     artModel: requireEnv("OPENROUTER_ART_MODEL"),
@@ -157,7 +168,9 @@ async function main() {
   if (args.existingCityContextPath) {
     console.log(`Extending existing city from: ${args.existingCityContextPath}`);
   }
-  console.log(`Generating content package for brief: "${args.brief}"`);
+  if (args.brief) {
+    console.log(`Generating content package for brief: "${args.brief}"`);
+  }
   const { package: pkg, manifestPath } = await orchestrator.execute({
     brief: args.brief,
     outputRoot: args.outputRoot,
@@ -186,14 +199,23 @@ async function main() {
 main().catch((err) => {
   if (err instanceof AgentRefusalError) {
     console.error(`Agent refused (retrying won't help): ${err.message}`);
+  } else if (err instanceof QuotaExceededError) {
+    console.error(
+      `${err.message}\n` +
+        `This is NOT something a retry (now or via --run-id later) can fix by itself — ` +
+        `either wait for OpenRouter's rolling 24h window to free up, or add credits at ` +
+        `https://openrouter.ai/credits (a one-time top-up permanently raises the daily cap ` +
+        `from 50 to 1000 requests). Whatever phase already finished is checkpointed — resume ` +
+        `with the run id printed above once you're ready, no work is lost.`,
+    );
   } else if (err instanceof TransientAgentError) {
     console.error(
       `Agent call failed after retrying (transient — safe to try again): ${err.message}`,
     );
-    // The generic catch-all in run-structured-agent.ts/run-structured-
-    // openrouter-agent.ts wraps an unrecognized exception with a short
-    // fixed message and keeps the real error as .cause — without printing
-    // it, every unclassified failure looks identical and undebuggable.
+    // run-structured-openrouter-agent.ts wraps an unrecognized exception
+    // with a short fixed message and keeps the real error as .cause —
+    // without printing it, every unclassified failure looks identical and
+    // undebuggable.
     if (err.cause) {
       console.error(`  cause: ${err.cause instanceof Error ? err.cause.message : err.cause}`);
     }

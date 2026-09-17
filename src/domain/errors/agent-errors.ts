@@ -27,7 +27,9 @@
  */
 
 /** A failure that's likely to succeed if retried unchanged: network
- * errors, timeouts, rate limits (HTTP 429/5xx-class problems). */
+ * errors, timeouts, a short-lived per-minute rate limit (HTTP 429/5xx-class
+ * problems). NOT every 429 belongs here — see QuotaExceededError below for
+ * the one that doesn't. */
 export class TransientAgentError extends Error {
   constructor(
     message: string,
@@ -35,6 +37,27 @@ export class TransientAgentError extends Error {
   ) {
     super(message);
     this.name = "TransientAgentError";
+  }
+}
+
+/** OpenRouter's free-tier ACCOUNT-WIDE daily request quota is exhausted
+ * (HTTP 429, message body contains "free-models-per-day") — a genuinely
+ * different failure from a short-lived per-minute rate limit, even though
+ * both arrive as the same openai SDK RateLimitError class. Retrying does
+ * NOT help here: per OpenRouter's own docs, a FAILED attempt still counts
+ * against the daily quota, so blind retries (the TransientAgentError
+ * treatment) just dig the hole deeper and burn through whatever quota is
+ * left even faster. Learned the hard way (see docs/ARCHITECTURE.md's
+ * "Known limitation" section for the incident). The fix is always
+ * external — wait for the rolling 24h window, or add credits — never
+ * something a retry from this process can resolve. */
+export class QuotaExceededError extends Error {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "QuotaExceededError";
   }
 }
 
