@@ -268,8 +268,8 @@ existed. Turning that prompt into a real file is a manual step; see
   database or calls its use-cases. `manifest.json` is the finished
   artifact; turning it into real `maps`/`npcs`/`quests`/`monsters` rows via
   the backend's own use-cases (`CreateMapUseCase`, `AddMonsterToMapUseCase`,
-  ...) is deliberately a separate, future piece of work — keeping this repo
-  decoupled from the game's database is the reason it's a separate repo at
-  all.
+  ...) is a separate script that lives in `mmorpg-backend` itself, not
+  here — keeping this repo decoupled from the game's database is the
+  reason it's a separate repo at all.
 - Animated sprites (would need a different generation pipeline entirely).
 - CI/CD and end-to-end tests against a real game instance.

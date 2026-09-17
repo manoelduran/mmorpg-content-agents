@@ -3,8 +3,8 @@
 A Clean Architecture multi-agent pipeline that turns a one-line brief
 ("a coastal pirate town, level 15-20") into a validated, self-contained
 **content package** — city lore, NPCs, quests, fields, instances, monster
-stats, and sprite assets — for [Aetherbound Online](#), a Ragnarok-style
-pixel-art MMORPG.
+stats, and sprite assets — for Aetherbound Online, a Ragnarok-style
+pixel-art MMORPG (a separate, private repo).
 
 A cost-aware setup: all three agents call [OpenRouter](https://openrouter.ai/)
 directly (plain, provider-agnostic chat completions — pick any model per
@@ -83,9 +83,9 @@ output/<cityId>/
 
 Turning that manifest into real rows in the game (via the backend's own
 `CreateMapUseCase`, `AddMonsterToMapUseCase`, etc.) is a deliberately
-separate, not-yet-built "installer" — keeping this repo from ever needing
-write access to the game's database is the whole reason it's a repo of its
-own.
+separate installer that lives in the game's own backend repo, not here —
+keeping this repo from ever needing write access to the game's database
+is the whole reason it's a repo of its own.
 
 ## Quick start
 
@@ -192,13 +192,13 @@ and how it composes with the fixed pipeline above.
   style reference only, then always writes a fresh, ready-to-paste
   generation prompt for every entity (`AssetEntry.source === 'generated'`,
   always) — turning that prompt into a pixel-art file is a manual step.
-- **Not yet run end-to-end against live API keys.** The pipeline typechecks
-  cleanly and the schema-generation step (`npm run build:schema`) has been
-  verified to run and produce valid JSON Schema; the three agent calls
-  themselves are implemented directly against OpenRouter's documented API
-  but haven't had a real run logged here yet — needs `OPENROUTER_API_KEY`
-  and costs real money for any non-free model you point at (Story/Dev/Art
-  can each be pointed at a free model independently).
+- **OpenRouter's free tier is genuinely limited.** 50 requests/day with
+  $0 lifetime credits purchased, 1000/day after a one-time (non-recurring)
+  top-up of $10+ — and a *failed* attempt still counts against that quota,
+  so a naive retry loop can dig the hole deeper. See `QuotaExceededError`
+  in `domain/errors/agent-errors.ts` for how this pipeline detects that
+  specific case and fails fast instead of retrying it. A full city costs
+  roughly 28 requests (1 Story + ~26 Art, one per npc/monster + 1 Dev).
 - **JSON Schema conformance from OpenRouter isn't guaranteed provider-to-
   provider** (OpenRouter's own docs say so) — every agent's path re-validates
   every response with zod regardless (see `run-structured-openrouter-agent.ts`).
@@ -208,11 +208,13 @@ and how it composes with the fixed pipeline above.
   all three agents — success, transient-error retry, refusal, and
   self-correction paths are all exercised without hitting the network.
   `openrouter-art-agent.test.ts` additionally covers its own file-listing/
-  thumbnailing/copying logic against a real temp directory.
+  thumbnailing/batching/resume logic against a real temp directory.
 
 ## Status
 
-Early. This is the v1 scaffold: schema-validated pipeline, Clean
-Architecture layering, the Story→{Art,Dev}→merge→validate flow. Animated
-sprites, the game-database installer, and CI are explicitly future work —
-see "Out of scope for v1" in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+Working v1. Schema-validated pipeline, Clean Architecture layering, the
+Story→{Art,Dev}→merge→validate flow, checkpointed recovery at batch
+granularity, and a first `Skill` for standalone regeneration have all run
+successfully end-to-end against live OpenRouter models, not just
+typechecked. Animated sprites and CI are still future work — see "Out of
+scope for v1" in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
