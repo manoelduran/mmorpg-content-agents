@@ -58,6 +58,14 @@ You must produce, 1:1 with what the story defined:
 - instances: one per instance, each with its own map (smaller is fine,
   width/height >= 20) and monster stats for its 2 NORMAL + 1 BOSS monsters
   (boss stats should clearly exceed normal — meaningfully higher hp/attack)
+
+Every drop (fieldMaps and instances alike) needs its own one-sentence
+description — what the item looks like, what it's used for, or which
+monster/place it's tied to. Never reuse the same description text across
+two different drops, even drops from the same city or the same monster —
+each one is a distinct item and needs to read like it. This description is
+also what a human artist will use to draw the item's sprite later, so
+favor concrete, visual detail over a vague catch-all line.
 - instanceCompanionPlacements: one per instance, both positions on that
   instance's own map — questGiverPosition near the instance's entry point,
   returnPortalPosition right next to the quest giver (a couple tiles away)

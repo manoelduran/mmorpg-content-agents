@@ -220,13 +220,51 @@
               "fieldId": {
                 "type": "string",
                 "description": "Matches exactly one fields[].id — 1:1"
+              },
+              "outboundGuardian": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "flavor": {
+                    "type": "string",
+                    "description": "One sentence describing this guardian's presence/manner"
+                  }
+                },
+                "required": [
+                  "name",
+                  "flavor"
+                ],
+                "additionalProperties": false,
+                "description": "Stands on the city side, lets the player OUT into the field"
+              },
+              "returnGuide": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "flavor": {
+                    "type": "string",
+                    "description": "One sentence describing this guardian's presence/manner"
+                  }
+                },
+                "required": [
+                  "name",
+                  "flavor"
+                ],
+                "additionalProperties": false,
+                "description": "Stands on the field side, on the edge closest to the city (opposite the direction the player arrived from), lets the player back IN"
               }
             },
             "required": [
               "id",
               "name",
               "direction",
-              "fieldId"
+              "fieldId",
+              "outboundGuardian",
+              "returnGuide"
             ],
             "additionalProperties": false
           }
@@ -250,6 +288,38 @@
               "instanceMasterNpcId": {
                 "type": "string",
                 "description": "Must match one of the 2 INSTANCE_MASTER npcs' id"
+              },
+              "bossCompletion": {
+                "type": "object",
+                "properties": {
+                  "questGiverName": {
+                    "type": "string",
+                    "description": "NPC standing inside the instance who gives, and later receives, the boss-kill quest"
+                  },
+                  "questTitle": {
+                    "type": "string"
+                  },
+                  "questNarrative": {
+                    "type": "string",
+                    "description": "Why this NPC wants the boss dead"
+                  },
+                  "lockedMessage": {
+                    "type": "string",
+                    "description": "What the return-portal NPC says before the boss-kill quest is turned in"
+                  },
+                  "unlockedMessage": {
+                    "type": "string",
+                    "description": "What the return-portal NPC says once the quest is complete"
+                  }
+                },
+                "required": [
+                  "questGiverName",
+                  "questTitle",
+                  "questNarrative",
+                  "lockedMessage",
+                  "unlockedMessage"
+                ],
+                "additionalProperties": false
               },
               "monsters": {
                 "minItems": 3,
@@ -290,6 +360,7 @@
               "name",
               "theme",
               "instanceMasterNpcId",
+              "bossCompletion",
               "monsters"
             ],
             "additionalProperties": false
@@ -497,6 +568,82 @@
             "additionalProperties": false
           }
         },
+        "portalGuardianPlacements": {
+          "minItems": 4,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "portalId": {
+                "type": "string",
+                "description": "Matches StoryManifest portals[].id"
+              },
+              "outboundGuardianPosition": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "z": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false,
+                "description": "On the city map, right at the portal, matching its direction"
+              },
+              "returnGuidePosition": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "z": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false,
+                "description": "On the destination field map (fieldMaps[].mapId for this portal's fieldId), on the edge closest to the city"
+              }
+            },
+            "required": [
+              "portalId",
+              "outboundGuardianPosition",
+              "returnGuidePosition"
+            ],
+            "additionalProperties": false
+          }
+        },
         "questObjectives": {
           "minItems": 10,
           "maxItems": 10,
@@ -696,13 +843,18 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 100
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "One sentence of item flavor text, specific to this item — what it looks like, what it's used for, or which monster/place it's tied to. Never a generic line reused across other drops."
                           }
                         },
                         "required": [
                           "itemId",
                           "itemName",
                           "rarity",
-                          "dropRate"
+                          "dropRate",
+                          "description"
                         ],
                         "additionalProperties": false
                       }
@@ -826,13 +978,18 @@
                             "type": "number",
                             "minimum": 0,
                             "maximum": 100
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "One sentence of item flavor text, specific to this item — what it looks like, what it's used for, or which monster/place it's tied to. Never a generic line reused across other drops."
                           }
                         },
                         "required": [
                           "itemId",
                           "itemName",
                           "rarity",
-                          "dropRate"
+                          "dropRate",
+                          "description"
                         ],
                         "additionalProperties": false
                       }
@@ -862,6 +1019,137 @@
             ],
             "additionalProperties": false
           }
+        },
+        "instanceCompanionPlacements": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "instanceId": {
+                "type": "string",
+                "description": "Matches StoryManifest instances[].id"
+              },
+              "questGiverPosition": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "z": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false,
+                "description": "On this instance's own map"
+              },
+              "returnPortalPosition": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "z": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false,
+                "description": "On this instance's own map, near the quest giver"
+              }
+            },
+            "required": [
+              "instanceId",
+              "questGiverPosition",
+              "returnPortalPosition"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "shopInventories": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "npcId": {
+                "type": "string",
+                "description": "Matches the MERCHANT or BLACKSMITH npc's id in StoryManifest"
+              },
+              "items": {
+                "minItems": 4,
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "itemName": {
+                      "type": "string"
+                    },
+                    "itemType": {
+                      "type": "string",
+                      "enum": [
+                        "EQUIPMENT",
+                        "CONSUMABLE",
+                        "MATERIAL"
+                      ]
+                    },
+                    "price": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "itemName",
+                    "itemType",
+                    "price",
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "npcId",
+              "items"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -869,9 +1157,12 @@
         "map",
         "npcPlacements",
         "portalPlacements",
+        "portalGuardianPlacements",
         "questObjectives",
         "fieldMaps",
-        "instances"
+        "instances",
+        "instanceCompanionPlacements",
+        "shopInventories"
       ],
       "additionalProperties": false
     }
