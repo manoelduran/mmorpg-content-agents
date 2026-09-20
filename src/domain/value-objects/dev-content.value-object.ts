@@ -70,6 +70,11 @@ export const MonsterDropSchema = z.object({
   itemName: z.string(),
   rarity: DropRaritySchema,
   dropRate: z.number().min(0).max(100),
+  description: z
+    .string()
+    .describe(
+      "One sentence of item flavor text, specific to this item — what it looks like, what it's used for, or which monster/place it's tied to. Never a generic line reused across other drops.",
+    ),
 });
 export type MonsterDrop = z.infer<typeof MonsterDropSchema>;
 
