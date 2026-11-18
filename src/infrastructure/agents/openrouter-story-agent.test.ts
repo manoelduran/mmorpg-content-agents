@@ -34,3 +34,9 @@ async function capturedSystemPrompt(): Promise<string> {
 test("OpenRouterStoryAgent: system prompt carries the shared content-language instruction", async () => {
   assert.ok((await capturedSystemPrompt()).includes(CONTENT_LANGUAGE_INSTRUCTION));
 });
+
+test("OpenRouterStoryAgent: the TALK_TO_NPC instruction asks for loreReveal", async () => {
+  const prompt = await capturedSystemPrompt();
+  const talkBullet = prompt.slice(prompt.indexOf("- TALK_TO_NPC"), prompt.indexOf("PORTALS"));
+  assert.match(talkBullet, /loreReveal/);
+});

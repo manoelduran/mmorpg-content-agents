@@ -38,9 +38,13 @@ INSTANCE_MASTER lets the player enter one of the city's 2 instances.)
 QUESTS — exactly ${CITY_QUEST_COUNT}, each given by one of the 3 QUEST_GIVER npcs (giverNpcId
 must be one of their ids), each objectiveType either:
   - KILL_MONSTER: objectiveSketch names a field monster to defeat
-  - TALK_TO_NPC: objectiveSketch names which npc to talk to and what piece
-    of this city's lore/history that conversation teaches the player — these
-    exist to teach players about the new content, on top of granting XP
+  - TALK_TO_NPC: objectiveSketch names which npc to talk to; loreReveal is
+    what that npc actually says — the concrete piece of this city's
+    lore/history the player learns. These exist to teach players about the
+    new content, on top of granting XP. A loreReveal may add facts beyond
+    the lore paragraph but must never contradict it, and no two quests'
+    loreReveal may teach the same fact. KILL_MONSTER quests have no
+    loreReveal at all.
 
 PORTALS — exactly ${CITY_PORTAL_COUNT}, one per cardinal direction (NORTH/SOUTH/EAST/WEST),
 each leading to exactly one FIELD (1:1, no sharing). There is no "just walk
