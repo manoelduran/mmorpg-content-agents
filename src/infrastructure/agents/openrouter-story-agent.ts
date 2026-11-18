@@ -15,6 +15,7 @@ import {
 import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
 import type { ChatCompletionClient } from "./openrouter-client";
 import { untrustedBlock } from "./prompt-safety";
+import { CONTENT_LANGUAGE_INSTRUCTION } from "./content-language";
 import {
   checkExistingNpcsPreserved,
   type ExistingCityContext,
@@ -72,9 +73,9 @@ Also write: a city lore paragraph fitting the existing world ("O Paradoxo
 das Eras" — a world fractured into temporal biomes anchored by the city
 Aethelgard), a level range, and atmosphere keywords for the Art agent.
 
-Write all narrative content (names, lore, dialogue, flavor text) in
-Brazilian Portuguese (pt-BR), matching the rest of the game's text. Every id
-you invent (cityId, npc/quest/field/portal/instance/monster ids) must be a
+${CONTENT_LANGUAGE_INSTRUCTION}
+
+Every id you invent (cityId, npc/quest/field/portal/instance/monster ids) must be a
 short, stable, kebab-case slug — Art and Dev reference these ids verbatim,
 so never reuse an id for two different things and never rename one
 mid-response.

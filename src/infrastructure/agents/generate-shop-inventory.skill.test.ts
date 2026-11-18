@@ -4,6 +4,7 @@ import {
   GenerateShopInventorySkill,
   type GenerateShopInventoryInput,
 } from "./generate-shop-inventory.skill";
+import { CONTENT_LANGUAGE_INSTRUCTION } from "./content-language";
 import type {
   ChatCompletionClient,
   StructuredCompletionRequest,
@@ -95,4 +96,11 @@ test("GenerateShopInventorySkill: a wrong npcId self-corrects instead of silentl
   assert.deepEqual(result, VALID_INVENTORY);
   assert.equal(client.calls.length, 2);
   assert.match(asString(client.calls[1]!.userPrompt), /npcId must be exactly 'harbor-merchant'/);
+});
+
+test("GenerateShopInventorySkill: system prompt carries the shared content-language instruction", async () => {
+  const client = new FakeChatCompletionClient([ok(VALID_INVENTORY)]);
+  await new GenerateShopInventorySkill(client, "test/model").execute(INPUT);
+
+  assert.ok(client.calls[0]!.systemPrompt.includes(CONTENT_LANGUAGE_INSTRUCTION));
 });
