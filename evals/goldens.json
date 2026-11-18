@@ -1,0 +1,15 @@
+[
+  {
+    "cityId": "aethelgard",
+    "brief": "Aethelgard, cidade âncora de 'O Paradoxo das Eras', nível 10-20",
+    "manifest": "../output/aethelgard/manifest.json",
+    "skip": {
+      "art": "sourceDetail was overwritten with post-production notes after the sprites were hand-drawn ('Gerado via ChatGPT...'); there's no generation prompt left to judge."
+    }
+  },
+  {
+    "cityId": "necropolis-de-eter",
+    "brief": "Necrópolis de Éter — uma cidade do Egito Ancestral colidida no Mosaico Temporal, ao sul de Aethelgard, além do Deserto Sul Ardente. Estilo cidade-bazar comercial no meio do deserto (referência de ambientação: Morroc, de Ragnarok Online): ruas estreitas de areia, tendas e mercadores regateando, portões monumentais de pedra, uma grande pirâmide de cristais de Éter pulsando no centro da cidade, tumbas e catacumbas nos arredores, estátuas de deuses antigos meio enterradas na areia. Atmosfera árida, ancestral, opressiva, dourada ao entardecer, com um peso de maldição no ar. Esta é uma cidade de nível mais alto e mais difícil que Aethelgard (que tem levelRange 10-20): defina o levelRange desta cidade entre 25 e 45, com monstros, quests e as 2 instâncias claramente mais perigosos e punitivos que os de Aethelgard — múmias-rainhas, guardiões de tumba, construtos de bronze antigo e horrores selados sob a pirâmide.",
+    "manifest": "../output/necropolis-de-eter/manifest.json"
+  }
+]

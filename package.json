@@ -7,7 +7,8 @@
     "build:schema": "tsx src/presentation/cli/build-schema.cli.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "eval": "cd evals && DEEPEVAL_TELEMETRY_OPT_OUT=YES uv run python report.py"
   },
   "keywords": [
     "openrouter",

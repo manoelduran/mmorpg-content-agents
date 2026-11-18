@@ -16,6 +16,12 @@
 - Every agent call MUST constrain output to a JSON Schema derived from `z.toJSONSchema(...)` of the corresponding domain value-object (`response_format` for OpenRouter) — never parse free text out of an agent's prose response.
 - Every use-case that receives an agent's output MUST re-validate it with the zod schema before doing anything else with it (`Schema.parse(raw)`), even though the SDK already constrained the shape. Don't trust the infrastructure layer wired it up correctly — verify at the boundary.
 
+## Evals
+
+- `evals/` is a separate Python project (DeepEval + `uv`) that scores finished `output/<cityId>/manifest.json` files with an LLM judge. It is NOT part of the pipeline: nothing in `src/` imports it or calls it, and it never writes to `output/`. The judge is therefore the one LLM caller outside Story/Art/Dev that's allowed.
+- The judge MUST be a free OpenRouter model (`:free` suffix) — `evals/judge.py` refuses anything else. Don't loosen that check.
+- Evals only cover what code can't decide (brief adherence, lore quality, language consistency, art-prompt quality). Anything checkable deterministically — counts, references, level ranges, pinned existing-city facts — belongs in TS (zod / `checkReferentialIntegrity`), not in a judge prompt.
+
 ## City template
 
 - The exact cardinalities (8 npcs, 10 quests, 4 portals/fields, 2 instances, drop counts, ...) live in exactly one place: `src/domain/value-objects/city-template.value-object.ts`. `story-manifest.value-object.ts` and `dev-content.value-object.ts` both import from it — never hardcode a count (`.length(8)`, a literal `10`, ...) directly in either of those files again; import the constant instead, so Story and Dev can never validate against different numbers.
