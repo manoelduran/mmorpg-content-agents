@@ -52,10 +52,10 @@ brief_adherence = GEval(
 lore_teaching_quests = GEval(
     name="Quests TALK_TO_NPC ensinam lore",
     evaluation_steps=[
-        "O input é a lore da cidade; o actual output são as quests do tipo TALK_TO_NPC.",
-        "Para cada quest, identifique qual fato concreto da lore (história, lugar, personagem, conflito) o jogador aprende ao completá-la.",
-        "Penalize quests cuja narrativa é genérica ('fale com X', 'leve uma mensagem') sem revelar nenhum fato da lore.",
-        "Penalize quests que contradizem a lore ou que repetem o mesmo fato que outra quest já ensina.",
+        "O input é a lore da cidade; o actual output são as quests do tipo TALK_TO_NPC, cada uma com quem a entrega (giver), com quem o jogador conversa (target) e o loreReveal: o que o target diz.",
+        "Giver e target são NPCs diferentes por design; uma narrativa que cita o target, e não o giver, está correta e não deve ser penalizada.",
+        "Para cada quest, identifique o fato concreto (nome, lugar, evento, causa) que o loreReveal ensina. Uma quest sem loreReveal não ensina nada e conta como falha.",
+        "Fatos novos, além da lore do input, são permitidos. Penalize apenas loreReveals genéricos, que contradizem a lore, ou que repetem um fato já ensinado por outra quest.",
     ],
     evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT],
     model=JUDGE,
@@ -70,6 +70,7 @@ narrative_coherence = GEval(
         "Verifique se os monstros de cada campo e instância combinam com a atmosfera daquele lugar.",
         "Verifique se as quests de matar monstros fazem sentido com os monstros e lugares descritos.",
         "Penalize contradições, nomes duplicados ou quase duplicados, e erros de digitação em nomes próprios.",
+        "Os NPCs citados em bossCompletion.questGiverName, outboundGuardian e returnGuide são companheiros fora do roster de npcs por design; não penalize que estejam ausentes da lista npcs.",
     ],
     evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT],
     model=JUDGE,
@@ -120,9 +121,22 @@ def build_cases(golden: dict) -> list[tuple[str, LLMTestCase, GEval]]:
         "levelRange": story["levelRange"],
         "npcs": story["npcs"],
         "fields": story["fields"],
+        "portals": story["portals"],
         "instances": story["instances"],
     }
-    talk_quests = [q for q in story["quests"] if q["objectiveType"] == "TALK_TO_NPC"]
+    npc_names = {n["id"]: n["name"] for n in story["npcs"]}
+    targets = {o["questId"]: o["objectiveTarget"] for o in dev["questObjectives"]}
+    talk_quests = [
+        {
+            "title": q["title"],
+            "giver": f"{q['giverNpcId']} ({npc_names.get(q['giverNpcId'], '?')})",
+            "target": f"{targets.get(q['id'])} ({npc_names.get(targets.get(q['id']), '?')})",
+            "narrative": q["narrative"],
+            "loreReveal": q.get("loreReveal"),
+        }
+        for q in story["quests"]
+        if q["objectiveType"] == "TALK_TO_NPC"
+    ]
     player_facing_items = {
         "drops": [
             {"itemName": d["itemName"], "description": d.get("description")}

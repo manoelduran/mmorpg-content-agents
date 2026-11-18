@@ -10,8 +10,8 @@ The TS side already guarantees *structure* (zod, city-template counts,
 | Case suffix | Metric | Asks |
 |---|---|---|
 | `:brief` | Aderência ao brief | Does the city reflect what the brief asked for? |
-| `:talk-quests` | Quests TALK_TO_NPC ensinam lore | Does each lore quest teach a concrete fact from the lore? |
-| `:coherence` | Coerência narrativa | Do NPCs, monsters, places and quests fit each other? |
+| `:talk-quests` | Quests TALK_TO_NPC ensinam lore | Does each quest's `loreReveal` (what the target NPC says) teach a concrete, non-contradicting, non-repeated fact? Sees giver and target, so a narrative naming the target isn't a mismatch. Manifests from before `loreReveal` existed fail this by design. |
+| `:coherence` | Coerência narrativa | Do NPCs, monsters, places and quests fit each other? Instance companions and portal guardians are outside the roster by design. |
 | `:language` | Consistência de idioma | Is every player-facing string (drops, shop items included) in the lore's language? |
 | `:art` | Prompts de arte acionáveis | Could an artist draw each sprite from its prompt alone? |
 
