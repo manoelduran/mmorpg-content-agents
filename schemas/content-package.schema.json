@@ -129,6 +129,10 @@
               "objectiveSketch": {
                 "type": "string",
                 "description": "For KILL_MONSTER: plain-language target, e.g. 'defeat 5 bilge rats' — Dev turns this into a concrete counter. For TALK_TO_NPC: which NPC to talk to and what lore/history of this package the conversation reveals — these exist to teach the player about the new content, on top of the XP reward."
+              },
+              "loreReveal": {
+                "description": "TALK_TO_NPC only (omit for KILL_MONSTER): what the target NPC actually tells the player, written as that NPC's in-character speech, 2-4 sentences. It must state at least one concrete fact (a name, place, event, or cause), may introduce facts beyond the city's lore paragraph as long as it doesn't contradict it, and must not repeat a fact another quest's loreReveal already teaches.",
+                "type": "string"
               }
             },
             "required": [
