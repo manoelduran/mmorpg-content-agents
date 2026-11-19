@@ -22,7 +22,7 @@ so DeepEval doesn't spend an extra call writing them).
 
 ```bash
 # in ../.env (same file the pipeline uses)
-OPENROUTER_JUDGE_MODEL=<a :free model id>
+OPENROUTER_JUDGE_MODEL=<a :free model id, different from the Story/Dev/Art models>
 
 cd evals
 uv run python list_free_judges.py   # current free models with structured outputs

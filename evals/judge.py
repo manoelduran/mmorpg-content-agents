@@ -37,6 +37,31 @@ def require_free_model(model_id: str) -> str:
     return model_id
 
 
+class JudgeIsGeneratorError(ValueError):
+    pass
+
+
+GENERATOR_MODEL_ENV_VARS = (
+    "OPENROUTER_STORY_MODEL",
+    "OPENROUTER_DEV_MODEL",
+    "OPENROUTER_ART_MODEL",
+)
+
+
+def require_independent_judge(model_id: str, env: Optional[dict] = None) -> str:
+    # A model grading its own output tends to favor it (self-preference
+    # bias), which inflates scores — so the judge must not be any of the
+    # models that generated the content it scores.
+    env = os.environ if env is None else env
+    clashes = [name for name in GENERATOR_MODEL_ENV_VARS if env.get(name) == model_id]
+    if clashes:
+        raise JudgeIsGeneratorError(
+            f"Judge model '{model_id}' also generates content ({', '.join(clashes)}). "
+            "Pick a judge from a different model; run `uv run python list_free_judges.py`."
+        )
+    return model_id
+
+
 class OpenRouterJudge(DeepEvalBaseLLM):
     def __init__(self, model: Optional[str] = None):
         model_id = model or os.environ.get("OPENROUTER_JUDGE_MODEL", "")
@@ -44,7 +69,7 @@ class OpenRouterJudge(DeepEvalBaseLLM):
             raise FreeModelRequiredError(
                 "Set OPENROUTER_JUDGE_MODEL in .env to a ':free' model id."
             )
-        self.model_id = require_free_model(model_id)
+        self.model_id = require_independent_judge(require_free_model(model_id))
         api_key = os.environ["OPENROUTER_API_KEY"]
         self._client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key, max_retries=4)
         self._async_client = AsyncOpenAI(

@@ -20,6 +20,7 @@
 
 - `evals/` is a separate Python project (DeepEval + `uv`) that scores finished `output/<cityId>/manifest.json` files with an LLM judge. It is NOT part of the pipeline: nothing in `src/` imports it or calls it, and it never writes to `output/`. The judge is therefore the one LLM caller outside Story/Art/Dev that's allowed.
 - The judge MUST be a free OpenRouter model (`:free` suffix) — `evals/judge.py` refuses anything else. Don't loosen that check.
+- The judge MUST NOT be a model that generated the content it scores (`OPENROUTER_STORY_MODEL`, `OPENROUTER_DEV_MODEL`, `OPENROUTER_ART_MODEL`) — a model grading its own output inflates scores (self-preference bias). `evals/judge.py` refuses that too. The same rule applies to any future security classifier: it can't be the model that received the injection.
 - Evals only cover what code can't decide (brief adherence, lore quality, language consistency, art-prompt quality). Anything checkable deterministically — counts, references, level ranges, pinned existing-city facts — belongs in TS (zod / `checkReferentialIntegrity`), not in a judge prompt.
 
 ## City template
