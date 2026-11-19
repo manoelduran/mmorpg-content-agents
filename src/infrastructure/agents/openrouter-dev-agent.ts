@@ -9,6 +9,7 @@ import {
 import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
 import type { ChatCompletionClient } from "./openrouter-client";
 import { untrustedBlock } from "./prompt-safety";
+import { CONTENT_LANGUAGE_INSTRUCTION } from "./content-language";
 import {
   checkExistingMapAndPlacementsPreserved,
   type ExistingCityContext,
@@ -74,6 +75,8 @@ favor concrete, visual detail over a vague catch-all line.
   one-line description), thematically fitting that npc and this city —
   never reference an item from a different city or assume one already
   exists in the live game
+
+${CONTENT_LANGUAGE_INSTRUCTION}
 
 Scale every monster's stats and every quest's rewards to the story's
 levelRange — an instance boss should be noticeably stronger than a field

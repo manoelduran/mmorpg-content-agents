@@ -6,6 +6,7 @@ import {
 } from "../../domain/value-objects/dev-content.value-object";
 import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
 import type { ChatCompletionClient } from "./openrouter-client";
+import { CONTENT_LANGUAGE_INSTRUCTION } from "./content-language";
 
 const SHOP_INVENTORY_SKILL_PROMPT = `You are generating a single NPC's shop inventory for
 Aetherbound Online, a Ragnarok-style pixel-art MMORPG.
@@ -15,6 +16,8 @@ their shop: itemName, itemType (EQUIPMENT, CONSUMABLE, or MATERIAL), a positive 
 and a one-line description. Every item must be newly invented for this shop — never reference
 an item from a different city or assume one already exists in the live game. Fit the items to
 the NPC's personality/role and the city's atmosphere; scale price to the given level range.
+
+${CONTENT_LANGUAGE_INSTRUCTION}
 
 Respond with a single JSON object matching the given schema exactly — no prose, no markdown
 fences, no commentary outside the JSON.`;

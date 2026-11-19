@@ -4,3 +4,7 @@ dist/
 .env
 *.log
 .DS_Store
+evals/.venv/
+evals/results/
+evals/.deepeval/
+__pycache__/

@@ -75,7 +75,12 @@ function collectNarrativeText(story: StoryManifest): string {
     story.lore,
     ...story.atmosphereKeywords,
     ...story.npcs.flatMap((npc) => [npc.name, npc.personality, ...npc.dialogueHooks]),
-    ...story.quests.flatMap((quest) => [quest.title, quest.narrative, quest.objectiveSketch]),
+    ...story.quests.flatMap((quest) => [
+      quest.title,
+      quest.narrative,
+      quest.objectiveSketch,
+      quest.loreReveal ?? "",
+    ]),
     ...story.fields.flatMap((field) => [
       field.name,
       field.atmosphere,

@@ -109,6 +109,33 @@ export const CityQuestSchema = z.object({
       "For KILL_MONSTER: plain-language target, e.g. 'defeat 5 bilge rats' — Dev turns this into a concrete counter. " +
         "For TALK_TO_NPC: which NPC to talk to and what lore/history of this package the conversation reveals — these exist to teach the player about the new content, on top of the XP reward.",
     ),
+  loreReveal: z
+    .string()
+    .optional()
+    .describe(
+      "TALK_TO_NPC only (omit for KILL_MONSTER): what the target NPC actually tells the player, written as that NPC's in-character speech, 2-4 sentences. " +
+        "It must state at least one concrete fact (a name, place, event, or cause), may introduce facts beyond the city's lore paragraph as long as it doesn't contradict it, " +
+        "and must not repeat a fact another quest's loreReveal already teaches.",
+    ),
+}).superRefine((quest, ctx) => {
+  // A TALK_TO_NPC quest only teaches lore if the fact itself is in the
+  // manifest — narrative/objectiveSketch merely point at a topic. KILL_MONSTER
+  // quests have no conversation, so a loreReveal there is drift, not content.
+  const hasReveal = quest.loreReveal !== undefined && quest.loreReveal.trim() !== "";
+  if (quest.objectiveType === "TALK_TO_NPC" && !hasReveal) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["loreReveal"],
+      message: `TALK_TO_NPC quest '${quest.id}' needs a non-empty loreReveal`,
+    });
+  }
+  if (quest.objectiveType === "KILL_MONSTER" && quest.loreReveal !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["loreReveal"],
+      message: `KILL_MONSTER quest '${quest.id}' must not have a loreReveal`,
+    });
+  }
 });
 export type CityQuest = z.infer<typeof CityQuestSchema>;
 

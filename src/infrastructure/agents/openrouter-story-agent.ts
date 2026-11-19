@@ -15,6 +15,7 @@ import {
 import { runStructuredOpenRouterAgent } from "./run-structured-openrouter-agent";
 import type { ChatCompletionClient } from "./openrouter-client";
 import { untrustedBlock } from "./prompt-safety";
+import { CONTENT_LANGUAGE_INSTRUCTION } from "./content-language";
 import {
   checkExistingNpcsPreserved,
   type ExistingCityContext,
@@ -37,9 +38,13 @@ INSTANCE_MASTER lets the player enter one of the city's 2 instances.)
 QUESTS — exactly ${CITY_QUEST_COUNT}, each given by one of the 3 QUEST_GIVER npcs (giverNpcId
 must be one of their ids), each objectiveType either:
   - KILL_MONSTER: objectiveSketch names a field monster to defeat
-  - TALK_TO_NPC: objectiveSketch names which npc to talk to and what piece
-    of this city's lore/history that conversation teaches the player — these
-    exist to teach players about the new content, on top of granting XP
+  - TALK_TO_NPC: objectiveSketch names which npc to talk to; loreReveal is
+    what that npc actually says — the concrete piece of this city's
+    lore/history the player learns. These exist to teach players about the
+    new content, on top of granting XP. A loreReveal may add facts beyond
+    the lore paragraph but must never contradict it, and no two quests'
+    loreReveal may teach the same fact. KILL_MONSTER quests have no
+    loreReveal at all.
 
 PORTALS — exactly ${CITY_PORTAL_COUNT}, one per cardinal direction (NORTH/SOUTH/EAST/WEST),
 each leading to exactly one FIELD (1:1, no sharing). There is no "just walk
@@ -72,9 +77,9 @@ Also write: a city lore paragraph fitting the existing world ("O Paradoxo
 das Eras" — a world fractured into temporal biomes anchored by the city
 Aethelgard), a level range, and atmosphere keywords for the Art agent.
 
-Write all narrative content (names, lore, dialogue, flavor text) in
-Brazilian Portuguese (pt-BR), matching the rest of the game's text. Every id
-you invent (cityId, npc/quest/field/portal/instance/monster ids) must be a
+${CONTENT_LANGUAGE_INSTRUCTION}
+
+Every id you invent (cityId, npc/quest/field/portal/instance/monster ids) must be a
 short, stable, kebab-case slug — Art and Dev reference these ids verbatim,
 so never reuse an id for two different things and never rename one
 mid-response.

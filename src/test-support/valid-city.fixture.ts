@@ -74,6 +74,7 @@ export function buildValidStory(): StoryManifest {
       giverNpcId: questGiverIds[i % questGiverIds.length]!,
       objectiveType: (isKill ? "KILL_MONSTER" : "TALK_TO_NPC") as "KILL_MONSTER" | "TALK_TO_NPC",
       objectiveSketch: isKill ? "defeat some monsters" : "go talk to the blacksmith",
+      ...(isKill ? {} : { loreReveal: `The blacksmith tells fact #${i} about this city's founding.` }),
     };
   });
 
